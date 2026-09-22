@@ -1,0 +1,172 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-builder-platform/contracts/skill-spec.schema.json",
+  "title": "SkillSpecV1",
+  "description": "Canonical SkillSpec contract (03. Skill Spec 계약). This file is the single source of truth: both the BFF (ajv) and the Python Brain (jsonschema) validate against this exact file, and TS/Pydantic types are typed mirrors of it, not separate validators.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "name", "description", "skillType",
+    "inputSchema", "outputSchema", "instructions", "model",
+    "capabilities", "knowledge", "execution", "runtime",
+    "guardrails", "usageExamples", "metadata"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "skillType": {
+      "type": "string",
+      "enum": ["prompt", "knowledge", "tool", "workflow", "composite"]
+    },
+    "inputSchema": { "type": "object" },
+    "outputSchema": { "type": "object" },
+    "instructions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective", "rules"],
+      "properties": {
+        "objective": { "type": "string", "minLength": 1 },
+        "rules": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "modelId", "allowUserOverride"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["user", "recommended", "fixed"] },
+        "modelId": { "type": ["string", "null"] },
+        "allowUserOverride": { "type": "boolean" }
+      },
+      "if": {
+        "properties": { "mode": { "const": "user" } },
+        "required": ["mode"]
+      },
+      "then": {},
+      "else": {
+        "properties": { "modelId": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "webSearch", "imageGeneration", "codeExecution",
+        "dataAnalysis", "fileAnalysis", "knowledgeSearch", "mcp"
+      ],
+      "properties": {
+        "webSearch": { "type": "boolean" },
+        "imageGeneration": { "type": "boolean" },
+        "codeExecution": { "type": "boolean" },
+        "dataAnalysis": { "type": "boolean" },
+        "fileAnalysis": { "type": "boolean" },
+        "knowledgeSearch": { "type": "boolean" },
+        "mcp": { "type": "boolean" }
+      }
+    },
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "documentIds"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["none", "workspace", "selected"] },
+        "documentIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "if": {
+        "properties": { "mode": { "const": "selected" } },
+        "required": ["mode"]
+      },
+      "then": {
+        "properties": { "documentIds": { "type": "array", "minItems": 1 } }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["steps"],
+      "properties": {
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/SkillStep" }
+        },
+        "outputMap": {
+          "description": "Optional explicit mapping from final Run Output keys to a $ref (Mapping Resolver 문법, $defs/MappingValue) or a Static Value. When present, this — not simply the last Step's output — determines the Run Output (Phase 5 설계 결정: condition/fallback/nested skill이 추가되면 마지막 Step이 항상 최종 결과라고 보장할 수 없음). When absent, the Run Output defaults to the last successfully completed Step's output.",
+          "type": "object"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeoutSec", "retryCount", "maxToolCalls", "maxNestedSkillDepth"],
+      "properties": {
+        "timeoutSec": { "type": "number", "minimum": 1, "maximum": 600 },
+        "retryCount": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "maxToolCalls": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "maxNestedSkillDepth": { "type": "integer", "minimum": 0, "maximum": 5 }
+      }
+    },
+    "guardrails": { "type": "array", "items": { "type": "string" } },
+    "usageExamples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["input"],
+        "properties": {
+          "description": { "type": "string" },
+          "input": {}
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "tags"],
+      "properties": {
+        "category": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "SkillStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "enum": ["llm", "tool", "knowledge", "skill", "transform", "condition"]
+        },
+        "refId": { "type": "string" },
+        "inputMap": {
+          "description": "Each value is either a Mapping Reference `{\"$ref\": \"input.<path>\"}` / `{\"$ref\": \"steps.<stepId>.output.<path>\"}`, or any other JSON value used literally as a Static Value (a plain string like \"input.text\" is itself a Static Value, not a reference — only the `$ref` object form is a reference). Enforced by the Mapping Resolver (08번), not by this JSON Schema.",
+          "type": "object"
+        },
+        "outputKey": { "type": "string" },
+        "condition": { "type": "string" },
+        "approvalRequired": { "type": "boolean" },
+        "onError": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action"],
+          "properties": {
+            "action": { "type": "string", "enum": ["fail", "retry", "skip", "fallback"] },
+            "retryCount": { "type": "integer", "minimum": 0 },
+            "fallbackStepId": { "type": "string" }
+          },
+          "if": {
+            "properties": { "action": { "const": "fallback" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["fallbackStepId"] }
+        }
+      }
+    }
+  }
+}

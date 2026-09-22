@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-builder-platform-postgres
+    environment:
+      POSTGRES_USER: ai_builder
+      POSTGRES_PASSWORD: ai_builder
+      POSTGRES_DB: ai_builder_platform
+    ports:
+      - "5477:5432"
+    volumes:
+      - ai_builder_platform_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_builder -d ai_builder_platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ai_builder_platform_pgdata:

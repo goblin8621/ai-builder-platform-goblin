@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "name": "Doc QA",
+  "description": "지정한 문서에서 답을 찾는 Skill",
+  "skillType": "knowledge",
+  "inputSchema": { "type": "object", "properties": { "question": { "type": "string" } } },
+  "outputSchema": { "type": "object", "properties": { "answer": { "type": "string" } } },
+  "instructions": { "objective": "문서 안에서만 답한다.", "rules": ["근거가 없으면 확인할 수 없다고 답한다."] },
+  "model": { "mode": "recommended", "modelId": "model-001", "allowUserOverride": true },
+  "capabilities": {
+    "webSearch": false, "imageGeneration": false, "codeExecution": false,
+    "dataAnalysis": false, "fileAnalysis": false, "knowledgeSearch": true, "mcp": false
+  },
+  "knowledge": { "mode": "selected", "documentIds": [] },
+  "execution": { "steps": [{ "id": "search", "name": "문서 검색", "type": "knowledge" }] },
+  "runtime": { "timeoutSec": 30, "retryCount": 1, "maxToolCalls": 0, "maxNestedSkillDepth": 0 },
+  "guardrails": [],
+  "usageExamples": [],
+  "metadata": { "category": "knowledge", "tags": [] }
+}

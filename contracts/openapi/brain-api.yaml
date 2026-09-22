@@ -1,0 +1,345 @@
+openapi: 3.0.3
+info:
+  title: AI Builder Platform - Python Brain Internal API
+  version: "0.1.0"
+  description: >
+    Internal REST contract between BFF and Python Brain.
+    Phase 1 scope: health check only. Skill Build/Run/Preview endpoints
+    are added in later phases per 05/08 design docs.
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness/readiness check for the Brain service.
+      responses:
+        "200":
+          description: Brain service is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /models:
+    get:
+      operationId: listModels
+      summary: Lists the Model Registry catalog (Phase 3 - static).
+      responses:
+        "200":
+          description: Known models.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelsResponse"
+
+  /tools:
+    get:
+      operationId: listTools
+      summary: Lists the Tool Registry catalog (Phase 3 - static).
+      responses:
+        "200":
+          description: Known tools.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolsResponse"
+
+  /capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Reports which platform Capabilities are actually supported.
+      responses:
+        "200":
+          description: Capability support flags.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilitiesResponse"
+
+  /builder/build:
+    post:
+      operationId: builderBuild
+      summary: >
+        Generates a new Skill Spec from a natural-language request
+        (04번 Skill Builder, create mode). Never persists anything —
+        the caller (BFF) re-validates and saves the returned spec.
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuilderRequestBody"
+      responses:
+        "200":
+          description: Builder output (draft or clarify).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuilderOutput"
+        "400":
+          description: Builder could not produce a valid Skill Spec after one repair attempt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+
+  /builder/refine:
+    post:
+      operationId: builderRefine
+      summary: >
+        Applies a natural-language change request to an existing Skill Spec
+        (04번 Skill Builder, refine mode). `currentSpec` is required.
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuilderRequestBody"
+      responses:
+        "200":
+          description: Builder output (update or clarify).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuilderOutput"
+        "400":
+          description: Builder could not produce a valid Skill Spec after one repair attempt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+
+components:
+  parameters:
+    UserId:
+      name: x-user-id
+      in: header
+      required: true
+      schema:
+        type: string
+    WorkspaceId:
+      name: x-workspace-id
+      in: header
+      required: true
+      schema:
+        type: string
+    RequestId:
+      name: x-request-id
+      in: header
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        service:
+          type: string
+          example: brain
+
+    RequestContext:
+      type: object
+      required: [userId, workspaceId, requestId]
+      description: >
+        Identity/isolation context propagated from BFF to Brain on every call.
+        Mirrors contracts/common-types.ts RequestContext.
+      properties:
+        userId:
+          type: string
+        workspaceId:
+          type: string
+        requestId:
+          type: string
+        conversationId:
+          type: string
+          nullable: true
+
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - validation_error
+            - not_found
+            - version_conflict
+            - unauthorized
+            - forbidden
+            - upstream_timeout
+            - upstream_unavailable
+            - internal_error
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        requestId:
+          type: string
+
+    ApiErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ApiError"
+
+    ModelDescriptor:
+      type: object
+      required: [modelId, displayName, provider]
+      properties:
+        modelId:
+          type: string
+        displayName:
+          type: string
+        provider:
+          type: string
+
+    ToolDescriptor:
+      type: object
+      required: [toolId, displayName, inputSchema, outputSchema]
+      properties:
+        toolId:
+          type: string
+        displayName:
+          type: string
+        inputSchema:
+          type: object
+          additionalProperties: true
+        outputSchema:
+          type: object
+          additionalProperties: true
+
+    CapabilityFlags:
+      type: object
+      required:
+        - webSearch
+        - imageGeneration
+        - codeExecution
+        - dataAnalysis
+        - fileAnalysis
+        - knowledgeSearch
+        - mcp
+      properties:
+        webSearch:
+          type: boolean
+        imageGeneration:
+          type: boolean
+        codeExecution:
+          type: boolean
+        dataAnalysis:
+          type: boolean
+        fileAnalysis:
+          type: boolean
+        knowledgeSearch:
+          type: boolean
+        mcp:
+          type: boolean
+
+    ModelsResponse:
+      type: object
+      required: [models]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelDescriptor"
+
+    ToolsResponse:
+      type: object
+      required: [tools]
+      properties:
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolDescriptor"
+
+    CapabilitiesResponse:
+      type: object
+      required: [capabilities]
+      properties:
+        capabilities:
+          $ref: "#/components/schemas/CapabilityFlags"
+
+    SkillSummary:
+      type: object
+      required: [id, name, description]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+
+    DocumentSummary:
+      type: object
+      required: [id, fileName]
+      properties:
+        id:
+          type: string
+        fileName:
+          type: string
+
+    BuilderRequestBody:
+      type: object
+      required: [request, availableSkills, availableKnowledge]
+      properties:
+        request:
+          type: string
+        currentSpec:
+          description: SkillSpecV1 (see contracts/skill-spec.schema.json). Required for /builder/refine, omitted for /builder/build.
+          type: object
+          nullable: true
+        availableSkills:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillSummary"
+        availableKnowledge:
+          type: array
+          items:
+            $ref: "#/components/schemas/DocumentSummary"
+        defaults:
+          type: object
+          additionalProperties: true
+
+    BuilderOutput:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [draft, update, clarify]
+        message:
+          type: string
+          nullable: true
+        changeSummary:
+          type: array
+          items:
+            type: string
+          nullable: true
+        missingFields:
+          type: array
+          items:
+            type: string
+          nullable: true
+        spec:
+          description: SkillSpecV1 (see contracts/skill-spec.schema.json). Present for draft/update, absent for clarify.
+          type: object
+          nullable: true

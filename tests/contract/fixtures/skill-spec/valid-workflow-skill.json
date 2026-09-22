@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0",
+  "name": "Sales Analyzer",
+  "description": "CSV 월별 매출과 이상치 분석",
+  "skillType": "workflow",
+  "inputSchema": {
+    "type": "object",
+    "required": ["fileId"],
+    "properties": { "fileId": { "type": "string" } }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["summary"],
+    "properties": { "summary": { "type": "string" } }
+  },
+  "instructions": {
+    "objective": "월별 매출과 이상치 분석",
+    "rules": ["숫자를 임의 생성하지 않음"]
+  },
+  "model": { "mode": "fixed", "modelId": "model-002", "allowUserOverride": false },
+  "capabilities": {
+    "webSearch": false,
+    "imageGeneration": false,
+    "codeExecution": true,
+    "dataAnalysis": true,
+    "fileAnalysis": true,
+    "knowledgeSearch": false,
+    "mcp": false
+  },
+  "knowledge": { "mode": "none", "documentIds": [] },
+  "execution": {
+    "steps": [
+      { "id": "parse", "name": "파일 파싱", "type": "tool", "refId": "file-parser", "onError": { "action": "fail" } },
+      { "id": "validate", "name": "데이터 검증", "type": "transform", "onError": { "action": "retry", "retryCount": 2 } },
+      { "id": "aggregate", "name": "월별 집계", "type": "tool", "refId": "python-data-analysis", "onError": { "action": "fallback", "fallbackStepId": "summarize" } },
+      { "id": "anomaly", "name": "이상치 탐지", "type": "tool", "refId": "python-data-analysis", "onError": { "action": "skip" } },
+      { "id": "summarize", "name": "결과 요약", "type": "llm" }
+    ]
+  },
+  "runtime": { "timeoutSec": 120, "retryCount": 2, "maxToolCalls": 8, "maxNestedSkillDepth": 0 },
+  "guardrails": ["외부로 원본 파일을 전송하지 않음"],
+  "usageExamples": [{ "input": { "fileId": "file-001" } }],
+  "metadata": { "category": "data-analysis", "tags": ["csv", "sales"] }
+}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "name": "Korean to English Translator",
+  "description": "Translates Korean sentences into natural English.",
+  "skillType": "prompt",
+  "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } } },
+  "outputSchema": { "type": "object", "properties": { "translatedText": { "type": "string" } } },
+  "instructions": { "objective": "Translate.", "rules": [] },
+  "model": { "mode": "fixed", "modelId": null, "allowUserOverride": false },
+  "capabilities": {
+    "webSearch": false, "imageGeneration": false, "codeExecution": false,
+    "dataAnalysis": false, "fileAnalysis": false, "knowledgeSearch": false, "mcp": false
+  },
+  "knowledge": { "mode": "none", "documentIds": [] },
+  "execution": { "steps": [{ "id": "translate", "name": "Translate", "type": "llm" }] },
+  "runtime": { "timeoutSec": 30, "retryCount": 1, "maxToolCalls": 0, "maxNestedSkillDepth": 0 },
+  "guardrails": [],
+  "usageExamples": [],
+  "metadata": { "category": "translation", "tags": [] }
+}

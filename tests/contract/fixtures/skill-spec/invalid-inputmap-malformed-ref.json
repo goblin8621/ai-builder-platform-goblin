@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "1.0",
+  "name": "Malformed Ref Skill",
+  "description": "$ref 값이 input./steps.로 시작하지 않는 잘못된 예시",
+  "skillType": "workflow",
+  "inputSchema": { "type": "object", "properties": {} },
+  "outputSchema": { "type": "object", "properties": {} },
+  "instructions": { "objective": "테스트", "rules": [] },
+  "model": { "mode": "user", "modelId": null, "allowUserOverride": true },
+  "capabilities": {
+    "webSearch": false, "imageGeneration": false, "codeExecution": false,
+    "dataAnalysis": false, "fileAnalysis": false, "knowledgeSearch": false, "mcp": false
+  },
+  "knowledge": { "mode": "none", "documentIds": [] },
+  "execution": {
+    "steps": [
+      { "id": "step1", "name": "First", "type": "transform", "inputMap": { "x": { "$ref": "config.someValue" } } }
+    ]
+  },
+  "runtime": { "timeoutSec": 30, "retryCount": 1, "maxToolCalls": 0, "maxNestedSkillDepth": 0 },
+  "guardrails": [],
+  "usageExamples": [],
+  "metadata": { "category": "test", "tags": [] }
+}

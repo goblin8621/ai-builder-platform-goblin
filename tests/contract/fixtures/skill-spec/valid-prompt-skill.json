@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "1.0",
+  "name": "Korean to English Translator",
+  "description": "Translates Korean sentences into natural English.",
+  "skillType": "prompt",
+  "inputSchema": {
+    "type": "object",
+    "required": ["text"],
+    "properties": { "text": { "type": "string" } }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["translatedText"],
+    "properties": { "translatedText": { "type": "string" } }
+  },
+  "instructions": {
+    "objective": "Translate the input Korean sentence into natural English without adding explanations.",
+    "rules": ["Do not add explanations.", "Preserve the original meaning only."]
+  },
+  "model": { "mode": "recommended", "modelId": "model-001", "allowUserOverride": true },
+  "capabilities": {
+    "webSearch": false,
+    "imageGeneration": false,
+    "codeExecution": false,
+    "dataAnalysis": false,
+    "fileAnalysis": false,
+    "knowledgeSearch": false,
+    "mcp": false
+  },
+  "knowledge": { "mode": "none", "documentIds": [] },
+  "execution": {
+    "steps": [
+      { "id": "translate", "name": "Translate to English", "type": "llm" }
+    ]
+  },
+  "runtime": { "timeoutSec": 30, "retryCount": 1, "maxToolCalls": 0, "maxNestedSkillDepth": 0 },
+  "guardrails": [],
+  "usageExamples": [{ "description": "greeting", "input": { "text": "안녕하세요." } }],
+  "metadata": { "category": "translation", "tags": ["prompt", "translation"] }
+}
