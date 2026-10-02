@@ -52,6 +52,21 @@ from app.skills.step_prompts import build_step_system_prompt, build_step_user_pr
 SUPPORTED_STEP_TYPES = {"llm", "transform", "tool", "knowledge", "skill"}
 
 
+class NestedApprovalNotSupportedError(RuntimeError):
+    """Raised when a Nested Skill child hits an `approvalRequired` Step
+    (P8 사용자 결정 #4 — Known Limitation, confirmed 2026-09-30). The Parent
+    Run must fail with THIS specific, machine-readable code rather than an
+    unrecognizable internal error — and, critically, must never silently
+    bypass the gate and execute the child's Tool/side-effect Step instead."""
+
+    code = "NESTED_SKILL_APPROVAL_NOT_SUPPORTED"
+
+    def __init__(self, child_id: str, child_step_id: str) -> None:
+        self.child_id = child_id
+        self.child_step_id = child_step_id
+        super().__init__("Approval required inside a nested Skill is not supported in the current runtime.")
+
+
 class StepResult(BaseModel):
     stepId: str
     stepType: str
@@ -72,10 +87,30 @@ class PendingApproval(BaseModel):
     input: dict[str, Any]
 
 
+class OutputValidationError(BaseModel):
+    path: str
+    message: str
+
+
 class RunResult(BaseModel):
     status: Literal["completed", "failed", "waiting_approval"]
+    # Normally only set when status == "completed". EXCEPTION: when the
+    # failure reason is specifically Output Schema Validation, `output`
+    # still carries the actual (invalid) value that was produced — Debug
+    # needs to show what actually came out, not just that it was rejected
+    # (P8 사용자 결정 #3: "Builder 품질 문제와 Runtime Contract 위반을 구분해서
+    # 확인할 수 있어야 한다").
     output: Optional[dict[str, Any]] = None
     error: Optional[str] = None
+    # Machine-readable code for the (currently few) failure reasons that
+    # need one — e.g. NestedApprovalNotSupportedError.code (P8 사용자 결정
+    # #4). None for ordinary Step failures, which only ever have a prose
+    # `error` message.
+    errorCode: Optional[str] = None
+    # Present only for the Output Schema Validation failure case — the
+    # structured (path, message) pairs the summary `error` string was built
+    # from, so Debug can render them as a list instead of parsing prose.
+    outputValidationErrors: Optional[list[OutputValidationError]] = None
     steps: list[StepResult] = []
     pendingApproval: Optional[PendingApproval] = None
 
@@ -206,6 +241,20 @@ async def _execute_skill_step(
         "skillVersionId": child_ref.skillVersionId,
         **child_result.model_dump(),
     }
+    if child_result.status == "waiting_approval":
+        # Known limitation (Phase 8 발견된 설계 이슈, decided 2026-09-30): a
+        # Nested Skill child pausing for Human Approval does NOT propagate
+        # up as the Parent Run also pausing — that needs Brain's recursive
+        # engine and BFF's approve/resume routing to both understand a
+        # multi-level "path" to the pending step, which is out of scope for
+        # this fix. Fail clearly and immediately with a specific,
+        # machine-readable code instead of the previous confusing
+        # "child skill Run failed: None" — and, above all, never proceed to
+        # execute the child's pending Tool/side-effect Step.
+        raise NestedApprovalNotSupportedError(
+            child_id=child_id,
+            child_step_id=child_result.pendingApproval.stepId if child_result.pendingApproval else "?",
+        )
     if child_result.status != "completed":
         raise RuntimeError(f"child skill '{child_id}' Run failed: {child_result.error}")
     return child_result.output or {}, child_trace
@@ -234,7 +283,7 @@ async def _run_steps(
     start_step_id: Optional[str] = None,
     prior_step_outputs: Optional[dict[str, dict[str, Any]]] = None,
     approved_step_id: Optional[str] = None,
-) -> tuple[list[StepResult], Optional[dict[str, Any]], Optional[str], Optional[PendingApproval]]:
+) -> tuple[list[StepResult], Optional[dict[str, Any]], Optional[str], Optional[PendingApproval], Optional[str]]:
     steps_spec: list[dict[str, Any]] = spec["execution"]["steps"]
     step_by_id = {s["id"]: s for s in steps_spec}
     step_outputs: dict[str, dict[str, Any]] = dict(prior_step_outputs or {})
@@ -261,11 +310,11 @@ async def _run_steps(
         except MappingError as exc:
             error = f"Step '{current_id}' input mapping failed: {exc}"
             results.append(StepResult(stepId=current_id, stepType=step_type, status="failed", input={}, error=error))
-            return results, None, error, None
+            return results, None, error, None, None
 
         if step.get("approvalRequired") and current_id != approved_step_id:
             pending = PendingApproval(stepId=current_id, stepType=step_type, input=step_input)
-            return results, None, None, pending
+            return results, None, None, pending, None
 
         on_error = step.get("onError") or {"action": "fail"}
         action = on_error.get("action", "fail")
@@ -273,6 +322,7 @@ async def _run_steps(
 
         step_succeeded = False
         last_error_message: Optional[str] = None
+        last_error_code: Optional[str] = None
         output: Optional[dict[str, Any]] = None
         child_trace: Optional[dict[str, Any]] = None
 
@@ -309,6 +359,7 @@ async def _run_steps(
                 break
             except Exception as exc:  # noqa: BLE001 - every Step failure funnels through the same Error Policy
                 last_error_message = str(exc)
+                last_error_code = getattr(exc, "code", None)
                 is_final_attempt = attempt == max_attempts
                 status: Literal["failed", "skipped"] = "skipped" if (is_final_attempt and action == "skip") else "failed"
                 step_error = f"Step '{current_id}' failed (attempt {attempt}/{max_attempts}): {last_error_message}"
@@ -335,13 +386,13 @@ async def _run_steps(
             target = on_error["fallbackStepId"]
             if target in ctx.visited_step_ids:
                 error = f"Step '{current_id}' fallback to '{target}' would create an infinite Fallback loop"
-                return results, None, error, None
+                return results, None, error, None, None
             current_id = target
             continue
 
         # 'fail' (explicit, default, or retry attempts exhausted)
         error = f"Step '{current_id}' failed after {max_attempts} attempt(s): {last_error_message}"
-        return results, None, error, None
+        return results, None, error, None, last_error_code
 
     try:
         output_map = spec["execution"].get("outputMap")
@@ -350,9 +401,9 @@ async def _run_steps(
         )
     except MappingError as exc:
         error = f"execution.outputMap failed: {exc}"
-        return results, None, error, None
+        return results, None, error, None, None
 
-    return results, final_output, None, None
+    return results, final_output, None, None, None
 
 
 async def _execute_skill_with_context(
@@ -366,7 +417,7 @@ async def _execute_skill_with_context(
     timeout_sec = spec.get("runtime", {}).get("timeoutSec", 30)
 
     try:
-        steps, output, error, pending_approval = await asyncio.wait_for(
+        steps, output, error, pending_approval, error_code = await asyncio.wait_for(
             _run_steps(spec, run_input, ctx, start_step_id, prior_step_outputs, approved_step_id),
             timeout=timeout_sec,
         )
@@ -377,14 +428,26 @@ async def _execute_skill_with_context(
         return RunResult(status="waiting_approval", steps=steps, pendingApproval=pending_approval)
 
     if error is not None:
-        return RunResult(status="failed", error=error, steps=steps)
+        return RunResult(status="failed", error=error, errorCode=error_code, steps=steps)
 
-    output_errors = sorted(
-        f"{'/'.join(str(p) for p in e.path) or '(root)'}: {e.message}"
-        for e in Draft7Validator(spec["outputSchema"]).iter_errors(output)
+    structured_output_errors = sorted(
+        (
+            OutputValidationError(path="/".join(str(p) for p in e.path) or "(root)", message=e.message)
+            for e in Draft7Validator(spec["outputSchema"]).iter_errors(output)
+        ),
+        key=lambda e: e.path,
     )
-    if output_errors:
-        return RunResult(status="failed", error=f"Output failed outputSchema validation: {output_errors}", steps=steps)
+    if structured_output_errors:
+        summary = [f"{e.path}: {e.message}" for e in structured_output_errors]
+        return RunResult(
+            status="failed",
+            error=f"Output failed outputSchema validation: {summary}",
+            # The actual (invalid) output is kept, not discarded — Debug
+            # needs to show what really came out vs. what was expected.
+            output=output,
+            outputValidationErrors=structured_output_errors,
+            steps=steps,
+        )
 
     return RunResult(status="completed", output=output, steps=steps)
 

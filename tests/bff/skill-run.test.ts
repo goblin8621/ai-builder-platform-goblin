@@ -325,10 +325,19 @@ describe.skipIf(!infraAvailable)('Skill Run (integration, requires live Postgres
     });
     const { skill } = await skillService.createSkill(pool, brainClient, context, spec);
 
-    const { run: pausedRun } = await skillRunService.createAndExecuteRun(pool, brainClient, context, skill.id, {
-      text: 'svc-1',
-    });
+    const { run: pausedRun, pendingApproval } = await skillRunService.createAndExecuteRun(
+      pool,
+      brainClient,
+      context,
+      skill.id,
+      { text: 'svc-1' },
+    );
     expect(pausedRun.status).toBe('waiting_approval');
+    // The pending-approval marker must be a clean top-level API field, not
+    // leaked through `run.output` (an internal storage detail — see
+    // skill-run-repository.ts markRunWaitingApproval).
+    expect(pendingApproval).toMatchObject({ stepId: 'restart', stepType: 'tool' });
+    expect(pausedRun.output).toBeNull();
 
     const { run: approvedRun } = await skillRunService.approveRun(pool, brainClient, context, pausedRun.id);
     expect(approvedRun.status).toBe('completed');
@@ -353,6 +362,7 @@ describe.skipIf(!infraAvailable)('Skill Run (integration, requires live Postgres
     const { run: rejectedRun } = await skillRunService.rejectRun(pool, context, pausedRun.id);
     expect(rejectedRun.status).toBe('failed');
     expect(JSON.stringify(rejectedRun.error)).toContain('Rejected');
+    expect(rejectedRun.output).toBeNull(); // no stale __pendingApproval marker left behind
   });
 
   it('allows cancelling a Run only while waiting_approval, not once running/completed', async () => {

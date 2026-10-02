@@ -148,7 +148,12 @@ export function extractPendingApproval(run: SkillRunRecord): PendingApproval | n
   return (marker as PendingApproval | undefined) ?? null;
 }
 
-/** Reject/Cancel (05번 6./7.): ends a Run without calling Brain again. */
+/**
+ * Reject/Cancel (05번 6./7.): ends a Run without calling Brain again.
+ * Clears `output_json` — a rejected/cancelled Run has no real output, and
+ * this also removes any `__pendingApproval` marker a prior
+ * `markRunWaitingApproval` call left there (02번: 리소스마다 깨끗한 상태).
+ */
 export async function markRunTerminal(
   pool: Pool,
   runId: string,
@@ -156,7 +161,7 @@ export async function markRunTerminal(
   error: Record<string, unknown> | null,
 ): Promise<SkillRunRecord> {
   const result = await pool.query(
-    `UPDATE skill_runs SET status = $1, error_json = $2, completed_at = now() WHERE id = $3 RETURNING *`,
+    `UPDATE skill_runs SET status = $1, error_json = $2, output_json = NULL, completed_at = now() WHERE id = $3 RETURNING *`,
     [status, error ? JSON.stringify(error) : null, runId],
   );
   return toSkillRunRecord(result.rows[0]);

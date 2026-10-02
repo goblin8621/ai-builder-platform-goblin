@@ -142,7 +142,19 @@ async def _run_pipeline(
             )
 
         if action not in ("draft", "update"):
-            last_errors = [f'Builder returned an unknown action: "{action}"']
+            # Seen in practice: the model returns the SkillSpec object
+            # directly at the top level instead of wrapping it in the
+            # required envelope. Name that mistake explicitly in the repair
+            # hint — "unknown action: None" alone wasn't actionable enough
+            # and the model repeated the same mistake on repair.
+            looks_like_bare_spec = "execution" in raw_output or "schemaVersion" in raw_output
+            hint = (
+                ' You returned the SkillSpec directly at the top level. You MUST wrap it: '
+                '{"action": "draft", "spec": <the SkillSpec you just produced>}.'
+                if looks_like_bare_spec
+                else ""
+            )
+            last_errors = [f'Builder output is missing a valid top-level "action" field (got: {action!r}).{hint}']
             messages = messages + [
                 {"role": "assistant", "content": result.text},
                 {"role": "user", "content": build_repair_prompt(result.text, last_errors)},

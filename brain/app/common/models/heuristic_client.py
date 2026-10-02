@@ -78,7 +78,12 @@ def _draft_knowledge_skill(request: str) -> dict[str, Any]:
     spec["outputSchema"] = {"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string"}}}
     spec["execution"] = {
         "steps": [
-            {"id": "search", "name": "Search knowledge", "type": "knowledge"},
+            {
+                "id": "search",
+                "name": "Search knowledge",
+                "type": "knowledge",
+                "inputMap": {"query": {"$ref": "input.question"}},
+            },
             {"id": "answer", "name": "Answer from sources", "type": "llm"},
         ]
     }
@@ -89,6 +94,10 @@ def _draft_tool_skill(request: str, tool_id: str) -> dict[str, Any]:
     spec = _draft_prompt_skill(request)
     spec["skillType"] = "tool"
     spec["execution"] = {"steps": [{"id": "call-tool", "name": "Call tool", "type": "tool", "refId": tool_id}]}
+    # A tool Skill has a `tool` Step by definition -> it needs at least one
+    # allowed Tool call, otherwise every Run fails immediately with
+    # "maxToolCalls (0) exceeded" (found via Phase 8 00번 UC4 E2E test).
+    spec["runtime"] = {**spec["runtime"], "maxToolCalls": 5}
     return spec
 
 

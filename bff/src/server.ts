@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import { loadConfig } from './config/index.js';
 import { logger } from './logging/index.js';
 import { AppError, toAppError } from './errors/index.js';
@@ -7,7 +8,7 @@ import { createDbPool } from './db/index.js';
 import { registerHealthRoutes } from './health/routes.js';
 import { BrainClient } from './brain-client/BrainClient.js';
 import { registerContextMiddleware } from './client-context/context-middleware.js';
-import { DevAuthContextProvider } from './client-context/DevAuthContextProvider.js';
+import { selectAuthProvider } from './client-context/select-auth-provider.js';
 import type { AuthContextProvider } from './client-context/AuthContextProvider.js';
 import { registerSkillRoutes } from './skills/routes.js';
 import { registerRegistryRoutes } from './registries/routes.js';
@@ -18,10 +19,15 @@ export function buildServer() {
   const config = loadConfig();
   const app = Fastify({ logger: false });
 
+  // Phase 7: web/ calls the BFF directly from the browser.
+  void app.register(cors, { origin: config.webOrigins });
+
   // Auth provider selection is the ONLY place identity resolution is wired.
   // A future real-auth Phase adds e.g. JwtAuthContextProvider here and
-  // swaps this line — no route/domain code changes.
-  const authProvider: AuthContextProvider = new DevAuthContextProvider(config);
+  // swaps this line — no route/domain code changes. Throws in production
+  // rather than silently wiring DevAuthContextProvider (see
+  // select-auth-provider.ts — mirrors Brain's ModelClient selection gate).
+  const authProvider: AuthContextProvider = selectAuthProvider(config);
   registerContextMiddleware(app, authProvider);
 
   const dbPool = createDbPool(config);

@@ -70,10 +70,24 @@ export type PendingApproval = {
   input: Record<string, unknown>;
 };
 
+export type OutputValidationError = { path: string; message: string };
+
 export type RunResult = {
   status: 'completed' | 'failed' | 'waiting_approval';
+  /**
+   * Normally only set when status === 'completed'. EXCEPTION: when the
+   * failure is specifically Output Schema Validation, `output` still
+   * carries the actual (invalid) value produced, so Debug can show what
+   * really came out (P8 사용자 결정 #3).
+   */
   output?: Record<string, unknown> | null;
   error?: string | null;
+  /** Machine-readable code for the (currently few) failure reasons that need
+   * one — e.g. "NESTED_SKILL_APPROVAL_NOT_SUPPORTED" (P8 사용자 결정 #4).
+   * null/absent for ordinary Step failures, which only have a prose `error`. */
+  errorCode?: string | null;
+  /** Present only for the Output Schema Validation failure case. */
+  outputValidationErrors?: OutputValidationError[] | null;
   steps: StepResult[];
   /** Present only when status === 'waiting_approval' (08번 7.). */
   pendingApproval?: PendingApproval | null;

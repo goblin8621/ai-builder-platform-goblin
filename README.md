@@ -2,13 +2,14 @@
 
 Standalone Skill Platform. Skill-first: Agent/외부 서비스 연동은 이후 별도 Phase.
 
-현재 상태: **Phase 6 — Extended Runtime** 완료 (Phase 1~5 포함).
+현재 상태: **Phase 7 — Skill Playground (Web UI)** 완료 (Phase 1~6 포함).
 
 ## 구조
 
 ```
 contracts/   BFF/Brain/Web가 공유하는 타입, OpenAPI 계약
-web/         Next.js (아직 미착수, Phase 7 Playground에서 본격 구현)
+web/         Next.js 14 App Router — Skill Playground (My Skills/만들기/구성/
+             Version History/Preview·Debug), Client Component만 사용
 bff/         Node.js/Fastify — Skill API, Auth Context, Brain Client
 brain/       Python/FastAPI — Skill Builder/Runtime, Common Foundation 인터페이스
 db/          SQL Migration / Seed
@@ -112,8 +113,9 @@ POST /skills/:id/refine       { "expectedVersion": n, "request": "..." } -> 검�
 - Builder 내부적으로는 구조 검증 실패 시 최대 1회 Repair(같은 LLM에게 오류 목록을 주고 재요청)를 시도하고, 그래도 실패하면 `400 validation_error`를 반환합니다(04번 문서 기준).
 - **LLM 연동**: `brain/app/common/models/selection.py`가 유일한 선택 지점입니다.
   - `ANTHROPIC_API_KEY`가 있으면 항상 실제 Anthropic API(`anthropic_client.py`) 사용.
-  - 없고 `BRAIN_ENV`가 `production`이면 **앱 기동 자체가 `ModelClientConfigurationError`로 실패**합니다(운영에서 dev/test Heuristic으로 조용히 대체되는 것을 원천 차단).
-  - 없고 `BRAIN_ENV`가 `development`/`test`(기본값)면 결정론적 Fallback인 `HeuristicModelClient`가 사용됩니다 — 실제 자연어 이해가 아니라 키워드 기반의 데모/테스트 전용 구현입니다(Phase1의 `DevAuthContextProvider`와 동일한 패턴).
+  - 없고 `OPENAI_API_KEY`가 있으면 실제 OpenAI API(`openai_client.py`, Phase 8 추가) 사용 — Model Registry의 추상 modelId(`model-001` 등)는 그대로, 실제 Provider 모델 문자열만 `OPENAI_API_KEY`/`MODEL_00N_OPENAI_MODEL_ID`로 분리됩니다.
+  - 둘 다 없고 `BRAIN_ENV`가 `production`이면 **앱 기동 자체가 `ModelClientConfigurationError`로 실패**합니다(운영에서 dev/test Heuristic으로 조용히 대체되는 것을 원천 차단).
+  - 둘 다 없고 `BRAIN_ENV`가 `development`/`test`(기본값)면 결정론적 Fallback인 `HeuristicModelClient`가 사용됩니다 — 실제 자연어 이해가 아니라 키워드 기반의 데모/테스트 전용 구현입니다(Phase1의 `DevAuthContextProvider`와 동일한 패턴).
 
 ## Skill Run
 
@@ -186,23 +188,58 @@ Step의 `inputMap`과 `execution.outputMap`은 오직 **명시적 `{"$ref": "...
 - **Run Output 규칙**: `execution.outputMap`이 있으면 그것으로 최종 Output을 구성하고 `outputSchema`로 검증합니다. 없으면 **마지막으로 성공적으로 완료된 Step의 output**을 기본값으로 사용합니다(배열의 마지막 항목이 아니라 뒤에서부터 `status: completed`를 찾음 — Phase 6에서 fallback/skip이 추가돼도 트레일링 Step이 실수로 최종 결과가 되지 않도록 미리 대비).
 - 이 규칙은 03(Skill Spec 계약)·08(Runtime) 문서에 반영이 필요합니다(코드에는 반영 완료, **Notion 문서 자체는 이번 변경에서 수정하지 않았습니다** — 별도로 갱신해 주세요).
 
-### 실제 LLM Provider 연동 확인 (opt-in)
+### 실제 LLM Provider 연동 확인 (opt-in) — Phase 8에서 OpenAI로 완료
 
 ```bash
 LIVE_LLM_TEST=true ANTHROPIC_API_KEY=sk-... pytest tests/brain/test_live_llm_smoke.py
+# 또는
+LIVE_LLM_TEST=true OPENAI_API_KEY=sk-... pytest tests/brain/test_live_llm_smoke.py
 ```
 
-일반 테스트 스위트는 이 파일을 항상 skip합니다(자격증명 없이도 전체 통과). `LIVE_LLM_TEST=true`일 때만 실제 Anthropic으로 Build → Run → Output Validation을 한 번에 확인합니다 — 09번 문서의 "Phase 8 이전 최소 1개 실제 Provider 연동" 체크포인트용입니다.
+일반 테스트 스위트는 이 파일을 항상 skip합니다(자격증명 없이도 전체 통과). `LIVE_LLM_TEST=true`일 때만 `select_model_client`가 실제로 고른 Provider(Anthropic 또는 OpenAI, 둘 다 있으면 Anthropic 우선)로 Build → Run → Output Validation을 한 번에 확인합니다 — 09번 문서의 "Phase 8 이전 최소 1개 실제 Provider 연동" 체크포인트이며, Phase 8에서 OpenAI로 실제 통과를 확인했습니다.
+
+## Skill Playground (Web, Phase 7)
+
+```bash
+cd web
+npm install
+npm run dev   # http://localhost:3000
+```
+
+- `NEXT_PUBLIC_BFF_URL`(기본 `http://localhost:4000`)로 BFF 주소를 지정합니다. 브라우저가
+  BFF를 직접 호출하므로 BFF에 `WEB_ORIGINS=http://localhost:3000`(기본값) CORS 설정이
+  필요합니다.
+- **My Skills**: 목록 조회 + 자연어로 신규 Skill 생성(`POST /skills/build`) + Activate/
+  Duplicate/Archive.
+- **Skill Workspace**(`/skills/:id`): 만들기(자연어 수정 요청) / 구성(SkillSpecV1 수동
+  편집, `expectedVersion` 낙관적 동시성) / Version History(Restore) 탭 + **Preview/Debug**
+  패널.
+- **Preview**는 저장된 Version만 실행 가능하며 `POST /skill-runs`(`mode: "preview"`)를
+  그대로 호출합니다 — Web 전용 Fake Runtime은 없습니다. **Debug**는 Run/Step 상태와
+  Nested Skill Child Run을 그대로 노출하며, Human Approval 대기 중이면 Preview/Debug
+  어느 탭에서도 Approve/Reject/Cancel 배너가 보입니다.
+- Web에는 Runtime 판단 로직이 없습니다 — 모든 검증/실행 결과는 BFF/Brain 응답을 그대로
+  표시할 뿐입니다.
 
 ## 테스트
 
 ```bash
-# BFF
+# BFF (tests/bff, tests/contract, tests/e2e 전부 포함)
 cd bff && npm test
 
 # Brain
 cd brain && source .venv/bin/activate && pytest
 ```
+
+`tests/e2e/`(Phase 8)는 00번 유즈케이스 E2E, Workspace/Knowledge Isolation, Restart
+Recovery를 실제 BFF→Brain→Postgres 경로로 검증합니다 — 다른 통합 테스트와 마찬가지로
+Postgres/Brain이 실행 중이어야 하며, 없으면 자동으로 skip됩니다.
+
+**테스트 DB 격리**: `npm test`는 기본적으로 실제 개발용 DB(`ai_builder_platform`)가
+아니라 별도의 `ai_builder_platform_test` DB를 사용합니다(`bff/vitest.config.ts`) — 테스트가
+만드는 Skill/Document fixture가 Web UI의 "My Skills"에 쌓이는 것을 막기 위함입니다.
+`scripts/dev-up.sh`가 두 DB 모두에 동일한 마이그레이션/시드를 적용해줍니다. 셸에
+`DATABASE_URL`을 직접 export해두면 그 값이 우선합니다.
 
 ## 설계 원칙 (요약)
 

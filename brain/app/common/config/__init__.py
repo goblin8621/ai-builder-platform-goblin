@@ -22,6 +22,12 @@ class Settings:
     # Maps OUR platform modelId (Model Registry, e.g. "model-001") to the
     # actual provider model string. Never stored in a Skill Spec.
     model_provider_map: dict[str, str] = field(default_factory=dict)
+    # Second real provider (Phase 8 확장): same platform modelId space
+    # ("model-001"/"model-002"), a different real provider model string per
+    # provider — the Skill Spec/Registry ID never changes based on which
+    # provider is actually configured (03번: Registry ID로만 참조).
+    openai_api_key: str | None = None
+    openai_model_provider_map: dict[str, str] = field(default_factory=dict)
     # Which platform modelId the Skill Builder itself uses to call the LLM.
     # This is independent of the modelId a generated Skill Spec chooses for
     # its OWN execution.
@@ -44,6 +50,11 @@ def load_settings() -> Settings:
         model_provider_map={
             "model-001": os.environ.get("MODEL_001_PROVIDER_ID", "claude-sonnet-4-5-20250929"),
             "model-002": os.environ.get("MODEL_002_PROVIDER_ID", "claude-sonnet-4-5-20250929"),
+        },
+        openai_api_key=os.environ.get("OPENAI_API_KEY") or None,
+        openai_model_provider_map={
+            "model-001": os.environ.get("MODEL_001_OPENAI_MODEL_ID", "gpt-4o-mini"),
+            "model-002": os.environ.get("MODEL_002_OPENAI_MODEL_ID", "gpt-4o-mini"),
         },
         builder_model_id=os.environ.get("BUILDER_MODEL_ID", "model-001"),
         default_run_model_id=os.environ.get("DEFAULT_RUN_MODEL_ID", "model-001"),

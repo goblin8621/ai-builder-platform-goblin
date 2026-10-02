@@ -74,6 +74,14 @@ async def test_output_failing_schema_marks_run_failed():
     assert result.status == "failed"
     assert "outputSchema" in result.error
     assert result.steps[0].status == "completed"  # the step itself succeeded; output validation failed after
+    # P8 사용자 결정 #3: Debug must be able to tell "the Step worked but the
+    # combined Output doesn't match outputSchema" apart from a real Runtime
+    # failure — the actual (invalid) output and structured errors survive
+    # the failure instead of being discarded.
+    assert result.output == {"wrongField": "oops"}
+    assert len(result.outputValidationErrors) == 1
+    assert result.outputValidationErrors[0].path == "(root)"
+    assert result.outputValidationErrors[0].message == "'translatedText' is a required property"
 
 
 @pytest.mark.asyncio

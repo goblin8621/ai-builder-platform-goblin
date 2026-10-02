@@ -140,20 +140,26 @@ export async function getKnowledgeCorpus(
 ): Promise<KnowledgeChunk[]> {
   if (knowledge.mode === 'none') return [];
 
+  // ORDER BY is required, not cosmetic: chunk_index must come back in
+  // document order (Phase 8 발견 — under concurrent load Postgres does not
+  // otherwise guarantee row order, and callers rely on chunkIndex ordering
+  // being stable per document).
   const query =
     knowledge.mode === 'selected'
       ? {
           text: `SELECT dc.document_id, dc.chunk_index, dc.content
                    FROM document_chunks dc
                    JOIN documents d ON d.id = dc.document_id
-                  WHERE d.workspace_id = $1 AND d.status = 'ready' AND d.id = ANY($2::uuid[])`,
+                  WHERE d.workspace_id = $1 AND d.status = 'ready' AND d.id = ANY($2::uuid[])
+                  ORDER BY dc.document_id, dc.chunk_index`,
           values: [workspaceId, knowledge.documentIds],
         }
       : {
           text: `SELECT dc.document_id, dc.chunk_index, dc.content
                    FROM document_chunks dc
                    JOIN documents d ON d.id = dc.document_id
-                  WHERE d.workspace_id = $1 AND d.status = 'ready'`,
+                  WHERE d.workspace_id = $1 AND d.status = 'ready'
+                  ORDER BY dc.document_id, dc.chunk_index`,
           values: [workspaceId],
         };
 

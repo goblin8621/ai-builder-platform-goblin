@@ -22,6 +22,8 @@ export type AppConfig = {
     /** Allow per-request override of identity via headers. Dev/test only. */
     devAllowContextOverrideHeaders: boolean;
   };
+  /** Origins allowed to call the BFF from a browser (Phase 7: web/). */
+  webOrigins: string[];
 };
 
 function readMode(): AppMode {
@@ -61,5 +63,6 @@ export function loadConfig(): AppConfig {
         process.env.DEV_SEED_WORKSPACE_ID ?? '00000000-0000-0000-0000-0000000000a1',
       devAllowContextOverrideHeaders: mode !== 'production',
     },
+    webOrigins: (process.env.WEB_ORIGINS ?? 'http://localhost:3000').split(',').map((s) => s.trim()),
   };
 }

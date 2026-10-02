@@ -8,9 +8,25 @@ import * as skillRepo from '../skills/skill-repository.js';
 import * as documentRepo from '../documents/document-repository.js';
 import { validateAgainstJsonSchema } from './input-validator.js';
 import * as runRepo from './skill-run-repository.js';
-import type { SkillRunMode } from './skill-run-repository.js';
+import type { SkillRunMode, SkillRunRecord } from './skill-run-repository.js';
 
 const NETWORK_OVERHEAD_MS = 5_000;
+
+/**
+ * `markRunWaitingApproval` stashes the pending-approval marker inside
+ * `output_json` (no schema change — see skill-run-repository.ts). That is
+ * an internal storage detail, not a public API shape: every response
+ * leaving this module exposes it as a proper top-level `pendingApproval`
+ * field instead, with `output` scrubbed back to `null` while waiting
+ * (there is no real output yet).
+ */
+function toPublicRun(run: SkillRunRecord) {
+  const pendingApproval = runRepo.extractPendingApproval(run);
+  return {
+    run: pendingApproval ? { ...run, output: null } : run,
+    pendingApproval,
+  };
+}
 
 /**
  * Nested Skill / Knowledge data Brain needs but can't fetch itself (no DB
@@ -96,13 +112,23 @@ async function applyRunResult(
       : await runRepo.completeSkillRun(pool, {
           runId,
           status: result.status,
+          // Normally null on failure — EXCEPT Output Schema Validation
+          // failures, where Brain deliberately keeps the actual (invalid)
+          // output so Debug can show what really came out (P8 결정 #3).
           output: result.output ?? null,
-          error: result.error ? { message: result.error } : null,
+          error: result.error
+            ? {
+                message: result.error,
+                ...(result.errorCode ? { code: result.errorCode } : {}),
+                ...(result.outputValidationErrors ? { validationErrors: result.outputValidationErrors } : {}),
+              }
+            : null,
         });
 
   const steps = await runRepo.listRunSteps(pool, runId);
   const childRuns = await runRepo.listChildRuns(pool, runId);
-  return { run, steps, childRuns };
+  const { run: publicRun, pendingApproval } = toPublicRun(run);
+  return { run: publicRun, steps, childRuns, pendingApproval };
 }
 
 /**
@@ -158,7 +184,8 @@ export async function getSkillRun(pool: Pool, context: RequestContext, runId: st
   if (!run) throw new AppError('not_found', `Skill Run "${runId}" not found`);
   const steps = await runRepo.listRunSteps(pool, runId);
   const childRuns = await runRepo.listChildRuns(pool, runId);
-  return { run, steps, childRuns };
+  const { run: publicRun, pendingApproval } = toPublicRun(run);
+  return { run: publicRun, steps, childRuns, pendingApproval };
 }
 
 /**
@@ -213,7 +240,7 @@ export async function rejectRun(pool: Pool, context: RequestContext, runId: stri
     message: `Rejected by user at step '${pendingApproval?.stepId ?? 'unknown'}'`,
   });
   const steps = await runRepo.listRunSteps(pool, runId);
-  return { run: updated, steps };
+  return { run: toPublicRun(updated).run, steps };
 }
 
 /**
