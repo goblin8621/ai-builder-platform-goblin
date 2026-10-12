@@ -14,13 +14,14 @@ import { registerSkillRoutes } from './skills/routes.js';
 import { registerRegistryRoutes } from './registries/routes.js';
 import { registerSkillRunRoutes } from './skill-runs/routes.js';
 import { registerDocumentRoutes } from './documents/routes.js';
+import { EXPORT_EXPOSED_HEADERS, registerExportRoutes } from './skill-exports/export.routes.js';
 
 export function buildServer() {
   const config = loadConfig();
   const app = Fastify({ logger: false });
 
   // Phase 7: web/ calls the BFF directly from the browser.
-  void app.register(cors, { origin: config.webOrigins });
+  void app.register(cors, { origin: config.webOrigins, exposedHeaders: EXPORT_EXPOSED_HEADERS });
 
   // Auth provider selection is the ONLY place identity resolution is wired.
   // A future real-auth Phase adds e.g. JwtAuthContextProvider here and
@@ -38,6 +39,7 @@ export function buildServer() {
   registerRegistryRoutes(app, brainClient);
   registerSkillRunRoutes(app, dbPool, brainClient);
   registerDocumentRoutes(app, dbPool);
+  registerExportRoutes(app, dbPool, brainClient);
 
   app.setErrorHandler((err, request, reply) => {
     const appError = toAppError(err);

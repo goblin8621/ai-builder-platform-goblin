@@ -1,4 +1,8 @@
 import type {
+  DocumentRecord,
+  ExportCompatibilityResponse,
+  ExportRequestBody,
+  ExportTargetsResponse,
   ModelDescriptor,
   SkillRecord,
   SkillRunRecord,
@@ -146,7 +150,15 @@ export function cancelRun(runId: string) {
 // ---------- Documents ----------
 
 export function listDocuments() {
-  return request<{ documents: { id: string; fileName: string; status: string; createdAt: string }[] }>('/documents');
+  return request<{ documents: DocumentRecord[] }>('/documents');
+}
+
+/** Admin-only on the server (403 for a member). Allowing export is what makes Include Knowledge possible. */
+export function setDocumentExportAllowed(id: string, exportAllowed: boolean) {
+  return request<{ document: DocumentRecord }>(`/documents/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ exportAllowed }),
+  });
 }
 
 export function createDocument(fileName: string, content: string) {
@@ -155,4 +167,66 @@ export function createDocument(fileName: string, content: string) {
 
 export function deleteDocument(id: string) {
   return request<void>(`/documents/${id}`, { method: 'DELETE' });
+}
+
+// ---------- Skill Export ----------
+
+export function getExportTargets() {
+  return request<ExportTargetsResponse>('/export/targets');
+}
+
+export function getExportCompatibility(
+  skillId: string,
+  params: Pick<ExportRequestBody, 'version' | 'target' | 'format' | 'includeKnowledge' | 'includeChildSkills' | 'includeSourceSpec'>,
+) {
+  const query = new URLSearchParams({
+    version: String(params.version),
+    target: params.target,
+    format: params.format,
+    includeKnowledge: String(Boolean(params.includeKnowledge)),
+    includeChildSkills: String(Boolean(params.includeChildSkills)),
+    includeSourceSpec: String(Boolean(params.includeSourceSpec)),
+  });
+  return request<ExportCompatibilityResponse>(`/skills/${skillId}/export/compatibility?${query}`);
+}
+
+export type ExportedFile = { blob: Blob; filename: string; level: string; contentHash: string };
+
+/** `filename*=UTF-8''...` first (exact name), then the ASCII `filename="..."` fallback. */
+export function filenameFromDisposition(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded[1]);
+    } catch {
+      /* fall through */
+    }
+  }
+  return /filename="([^"]+)"/i.exec(header)?.[1] ?? fallback;
+}
+
+/**
+ * The BFF re-verifies permissions and compatibility for every export; nothing the UI shows
+ * (documents' exportAllowed, compatibility level) is trusted by the server.
+ */
+export async function exportSkill(skillId: string, body: ExportRequestBody): Promise<ExportedFile> {
+  const response = await fetch(`${BFF_URL}/skills/${skillId}/export`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const parsed = await response.json().catch(() => null);
+    if (parsed?.error?.code) {
+      throw new ApiError(parsed.error.code, parsed.error.message ?? 'Export failed', parsed.error.details);
+    }
+    throw new ApiError('internal_error', `Export failed with status ${response.status}`);
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(response.headers.get('content-disposition'), `skill-v${body.version}`),
+    level: response.headers.get('x-export-compatibility') ?? 'unknown',
+    contentHash: response.headers.get('x-export-content-hash') ?? '',
+  };
 }

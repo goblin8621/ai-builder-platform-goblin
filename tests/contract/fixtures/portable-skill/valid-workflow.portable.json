@@ -1,0 +1,138 @@
+{
+  "dependencies": [],
+  "description": "CSV 월별 매출과 이상치 분석",
+  "examples": [
+    {
+      "input": {
+        "fileId": "file-001"
+      }
+    }
+  ],
+  "formatVersion": "1.0",
+  "guardrails": [
+    "외부로 원본 파일을 전송하지 않음"
+  ],
+  "inputContract": {
+    "properties": {
+      "fileId": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "fileId"
+    ],
+    "type": "object"
+  },
+  "instructions": [
+    "숫자를 임의 생성하지 않음"
+  ],
+  "knowledge": [],
+  "name": "Sales Analyzer",
+  "objective": "월별 매출과 이상치 분석",
+  "outputContract": {
+    "properties": {
+      "summary": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "summary"
+    ],
+    "type": "object"
+  },
+  "requiredCapabilities": [
+    {
+      "id": "code-execution"
+    },
+    {
+      "id": "data-analysis"
+    },
+    {
+      "id": "file-analysis"
+    }
+  ],
+  "requiredTools": [
+    {
+      "description": "Parses CSV text into columns and rows.",
+      "id": "file-parser",
+      "inputSchema": {
+        "type": "object"
+      },
+      "outputSchema": {
+        "type": "object"
+      },
+      "protocol": "builtin"
+    },
+    {
+      "description": "Runs fixed, reviewed analysis operations on tabular data inside an isolated sandbox.",
+      "id": "python-data-analysis",
+      "inputSchema": {
+        "type": "object"
+      },
+      "outputSchema": {
+        "type": "object"
+      },
+      "protocol": "builtin"
+    }
+  ],
+  "runtimeLimits": {
+    "maxNestedSkillDepth": 0,
+    "maxToolCalls": 8,
+    "retryCount": 2,
+    "timeoutSec": 120
+  },
+  "runtimeRequirements": {
+    "requiresApproval": false,
+    "requiresCodeExecution": true,
+    "requiresKnowledge": false,
+    "requiresLLM": true,
+    "requiresMcp": false,
+    "requiresNestedSkill": false,
+    "requiresTools": true
+  },
+  "skillType": "workflow",
+  "workflow": [
+    {
+      "id": "parse",
+      "kind": "tool",
+      "name": "파일 파싱",
+      "onError": {
+        "action": "fail"
+      },
+      "ref": "file-parser"
+    },
+    {
+      "id": "validate",
+      "kind": "transform",
+      "name": "데이터 검증",
+      "onError": {
+        "action": "retry",
+        "retryCount": 2
+      }
+    },
+    {
+      "id": "aggregate",
+      "kind": "tool",
+      "name": "월별 집계",
+      "onError": {
+        "action": "fallback",
+        "fallbackStepId": "summarize"
+      },
+      "ref": "python-data-analysis"
+    },
+    {
+      "id": "anomaly",
+      "kind": "tool",
+      "name": "이상치 탐지",
+      "onError": {
+        "action": "skip"
+      },
+      "ref": "python-data-analysis"
+    },
+    {
+      "id": "summarize",
+      "kind": "llm",
+      "name": "결과 요약"
+    }
+  ]
+}

@@ -7,6 +7,7 @@ const HEADER_USER_ID = 'x-dev-user-id';
 const HEADER_WORKSPACE_ID = 'x-dev-workspace-id';
 const HEADER_REQUEST_ID = 'x-request-id';
 const HEADER_CONVERSATION_ID = 'x-conversation-id';
+const HEADER_WORKSPACE_ROLE = 'x-dev-workspace-role';
 
 function firstHeader(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
@@ -34,6 +35,12 @@ export class DevAuthContextProvider implements AuthContextProvider {
       ? firstHeader(request.headers[HEADER_WORKSPACE_ID])
       : undefined;
 
+    const overrideRole = this.config.auth.devAllowContextOverrideHeaders
+      ? firstHeader(request.headers[HEADER_WORKSPACE_ROLE])
+      : undefined;
+    const workspaceRole =
+      overrideRole === 'admin' || overrideRole === 'member' ? overrideRole : this.config.auth.devWorkspaceRole;
+
     const requestId = firstHeader(request.headers[HEADER_REQUEST_ID]) ?? randomUUID();
     const conversationId = firstHeader(request.headers[HEADER_CONVERSATION_ID]) ?? null;
 
@@ -42,6 +49,7 @@ export class DevAuthContextProvider implements AuthContextProvider {
       workspaceId: overrideWorkspaceId ?? this.config.auth.devSeedWorkspaceId,
       requestId,
       conversationId,
+      workspaceRole,
     };
   }
 }

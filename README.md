@@ -2,7 +2,7 @@
 
 Standalone Skill Platform. Skill-first: Agent/외부 서비스 연동은 이후 별도 Phase.
 
-현재 상태: **Phase 7 — Skill Playground (Web UI)** 완료 (Phase 1~6 포함).
+현재 상태: **Phase 1~9 완료** (Skill Playground/Web UI, E2E·Stabilization, 실LLM(OpenAI) 연동 검증, Skill Export/Portability — Claude Skill·Generic Markdown 포함).
 
 ## 구조
 
@@ -24,6 +24,7 @@ tests/       BFF(vitest) / Brain(pytest) / Contract 테스트
 docker-compose up -d postgres
 psql "postgresql://ai_builder:ai_builder@localhost:5477/ai_builder_platform" -f db/migrations/001_init.sql
 psql "postgresql://ai_builder:ai_builder@localhost:5477/ai_builder_platform" -f db/migrations/002_skill_registry.sql
+psql "postgresql://ai_builder:ai_builder@localhost:5477/ai_builder_platform" -f db/migrations/003_document_export_permission.sql
 psql "postgresql://ai_builder:ai_builder@localhost:5477/ai_builder_platform" -f db/seeds/001_seed_workspace.sql
 ```
 
@@ -94,7 +95,7 @@ POST   /skills/:id/versions/:version/restore   과거 spec 재검증 후 새 Ver
 
 GET    /models                 Model Registry (Brain 프록시, 정적 카탈로그)
 GET    /tools                  Tool Registry (Brain 프록시, 정적 카탈로그)
-GET    /capabilities           Capability 지원 여부 (Phase 3 기준 전부 false)
+GET    /capabilities           Capability 지원 여부 (codeExecution/dataAnalysis/fileAnalysis/knowledgeSearch는 true, webSearch/imageGeneration/mcp는 false — 아래 "Extended Runtime" 참고)
 ```
 
 `/skills/:id/preview/stream`(SSE Streaming)만 아직 없습니다 — 아래 "Extended Runtime" 참고.
@@ -198,6 +199,43 @@ LIVE_LLM_TEST=true OPENAI_API_KEY=sk-... pytest tests/brain/test_live_llm_smoke.
 
 일반 테스트 스위트는 이 파일을 항상 skip합니다(자격증명 없이도 전체 통과). `LIVE_LLM_TEST=true`일 때만 `select_model_client`가 실제로 고른 Provider(Anthropic 또는 OpenAI, 둘 다 있으면 Anthropic 우선)로 Build → Run → Output Validation을 한 번에 확인합니다 — 09번 문서의 "Phase 8 이전 최소 1개 실제 Provider 연동" 체크포인트이며, Phase 8에서 OpenAI로 실제 통과를 확인했습니다.
 
+## Skill Export / Portability (Phase 9)
+
+`SkillSpec → Portable Skill Compiler → PortableSkill → Sanitizer → Compatibility Analyzer → Export Adapter(target, format) → 파일/ZIP`.
+`SkillSpec`은 내부 Source of Truth로 유지하고, Provider/Runtime 차이는 **Target Profile + Adapter**가 담당합니다
+(`brain/app/exports/`). Brain은 DB 없이 변환만, BFF는 Version·Child·권한 해석과 ZIP 패키징/다운로드를 맡습니다.
+자세한 설계·정책·Known Limitations는 `DEVELOPMENT_LOG.md`의 Phase 9 절.
+
+```
+GET   /export/targets                                    Target / Format 목록 (adapterAvailable 포함)
+GET   /skills/:id/export/compatibility?version=N&target=claude&format=skill-package[&includeKnowledge=true][&includeChildSkills=true]
+POST  /skills/:id/export   { version, target, format, includeKnowledge?, includeChildSkills?,
+                             includeSourceSpec?, acknowledgeWarnings? }
+PATCH /documents/:id       { exportAllowed }             workspace admin 전용
+```
+
+| target | format | 결과 |
+|---|---|---|
+| `claude` | `skill-package` | Claude/Agent Skill ZIP (SKILL.md + YAML frontmatter + references) |
+| `generic` | `markdown` | 일반 Markdown(Provider frontmatter 없음) |
+| `generic` | `portable-package` | Portable Skill Package ZIP |
+| `generic` | `raw-spec` | 저장된 SkillSpec JSON |
+
+- `version`은 필수이며 "latest"를 암묵 적용하지 않습니다. 미지원 target은 `EXPORT_TARGET_UNSUPPORTED`, target이 제공하지 않는 format은
+  `EXPORT_FORMAT_UNSUPPORTED`, Adapter 누락은 `EXPORT_TARGET_ADAPTER_UNAVAILABLE`.
+- **호환성**: `full | partial | unsupported | blocked`(API는 소문자, UI만 대문자). 사유·`summary`(Required MCP / Knowledge / Unsupported Capabilities)·수동 설정을
+  반환합니다. `partial`/`unsupported`는 `acknowledgeWarnings=true`가 있어야 Export되고, Target Optimized(`claude`)는 `unsupported`면 차단됩니다.
+  `blocked`(Secret 탐지 / Knowledge 권한 없음)는 Compatibility에서 HTTP 200으로 설명하고, 실제 Export는 차단합니다(Secret 400 / Knowledge 403).
+- **ZIP 경로는 모두 ASCII-safe**(`skill-a31fc912/references/document-928ac031.md`): 한글 이름이어도 안전하게 풀립니다.
+  표시 이름은 `manifest.json`(`displayName`, `archivePath`, `fileName`)에 보존됩니다.
+- **Sanitizer**: 모든 형식(Raw SkillSpec 포함)에 적용. Credential **값**(API Key, Bearer 값, 비밀번호/secret 할당, `?access_token=…`, URL userinfo, Private Key 등)이
+  있으면 redact 없이 `EXPORT_SECRET_DETECTED`로 차단하고 `path`/`category`만 알려줍니다. `/oauth/token` 같은 경로나 placeholder는 허용합니다.
+- **Knowledge**: `selected`만 Include 가능, 조건은 `workspace ∧ document 접근 ∧ documents.export_allowed`(기본 `false`). `workspace` 모드는 항상 References Only.
+- **Child Skill**: Export 시점의 Child Version을 잠그고 Manifest에 version/content hash를 기록합니다. PortableSkill에는 내부 ID 대신 `child:`/`doc:` alias만 사용합니다.
+- **재현성**: 같은 Parent Version + resolved Child Versions + Knowledge Content + Options + Target/Format이면 바이트 동일(ZIP 순서·mtime 고정, JSON 정렬, LF).
+  Export 시각은 `X-Exported-At` 헤더/로그에만 있습니다.
+- Web UI: Skill 헤더 `Export ▾`(Claude Skill / Generic Markdown / Raw SkillSpec / Portable Skill Package) → Compatibility 확인 → 다운로드.
+
 ## Skill Playground (Web, Phase 7)
 
 ```bash
@@ -233,7 +271,9 @@ cd brain && source .venv/bin/activate && pytest
 
 `tests/e2e/`(Phase 8)는 00번 유즈케이스 E2E, Workspace/Knowledge Isolation, Restart
 Recovery를 실제 BFF→Brain→Postgres 경로로 검증합니다 — 다른 통합 테스트와 마찬가지로
-Postgres/Brain이 실행 중이어야 하며, 없으면 자동으로 skip됩니다.
+Postgres/Brain이 실행 중이어야 하며, 없으면 자동으로 skip됩니다. `tests/e2e/phase9-export.test.ts`(Phase 9)는
+Skill Builder → 저장 → Claude Export → ZIP 해제 → SKILL.md/YAML 검증(+ 외부 `unzip -t`)과 Knowledge/Tool/권한 없는 문서 시나리오를 검증합니다.
+Brain은 reload 없이 기동되므로 Brain 코드를 바꾼 뒤에는 재시작해야 BFF 통합 테스트가 새 코드를 봅니다.
 
 **테스트 DB 격리**: `npm test`는 기본적으로 실제 개발용 DB(`ai_builder_platform`)가
 아니라 별도의 `ai_builder_platform_test` DB를 사용합니다(`bff/vitest.config.ts`) — 테스트가

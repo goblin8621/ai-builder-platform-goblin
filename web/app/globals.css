@@ -148,6 +148,26 @@ label {
   background: rgba(229, 169, 65, 0.15);
   color: var(--color-warn);
 }
+.badge.full {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--color-ok);
+}
+.badge.supported {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--color-ok);
+}
+.badge.partial {
+  background: rgba(229, 169, 65, 0.15);
+  color: var(--color-warn);
+}
+.badge.unsupported {
+  background: rgba(229, 72, 77, 0.15);
+  color: var(--color-danger);
+}
+.badge.blocked {
+  background: var(--color-danger);
+  color: #fff;
+}
 .badge.cancelled,
 .badge.skipped {
   background: #3a3f4b;
@@ -317,4 +337,96 @@ nav.topbar h1 {
 }
 .chat-input-row textarea {
   resize: none;
+}
+
+/* ---------- Export menu / dialog ---------- */
+.menu-wrap {
+  position: relative;
+}
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 220px;
+  z-index: 21;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.menu .menu-item {
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 8px 10px;
+}
+.menu button.menu-item:hover {
+  background: var(--color-surface-2);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow: auto;
+}
+.modal {
+  width: min(640px, 100%);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.modal .check {
+  display: block;
+  margin-bottom: 6px;
+}
+.modal select {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+.compat-panel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--color-bg);
+}
+.compat-panel .kv {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 4px 12px;
+  margin: 12px 0 0;
+}
+.compat-panel .kv dt {
+  color: var(--color-text-dim);
+}
+.compat-panel .kv dd {
+  margin: 0;
+}
+.compat-panel code {
+  margin-right: 6px;
+  background: var(--color-surface-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.compat-panel ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.compat-panel li.warn {
+  color: var(--color-warn);
 }

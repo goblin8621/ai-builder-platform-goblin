@@ -10,6 +10,8 @@ export type DocumentRecord = {
   mimeType: string;
   storageKey: string;
   status: DocumentStatus;
+  /** Phase 9: fail-closed (default false). Only a workspace admin can allow a Document to be exported. */
+  exportAllowed: boolean;
   createdBy: string;
   createdAt: string;
 };
@@ -22,6 +24,7 @@ function toDocumentRecord(row: any): DocumentRecord {
     mimeType: row.mime_type,
     storageKey: row.storage_key,
     status: row.status,
+    exportAllowed: row.export_allowed,
     createdBy: row.created_by,
     createdAt: row.created_at,
   };
@@ -99,6 +102,54 @@ export async function listDocuments(pool: Pool, workspaceId: string): Promise<Do
 export async function getDocument(pool: Pool, workspaceId: string, documentId: string): Promise<DocumentRecord | null> {
   const result = await pool.query(`SELECT * FROM documents WHERE id = $1 AND workspace_id = $2`, [documentId, workspaceId]);
   return result.rows[0] ? toDocumentRecord(result.rows[0]) : null;
+}
+
+/** Admin-only (enforced by the caller, see export-permissions.ts). Returns null if not found in this workspace. */
+export async function setDocumentExportAllowed(
+  pool: Pool,
+  workspaceId: string,
+  documentId: string,
+  exportAllowed: boolean,
+): Promise<DocumentRecord | null> {
+  const result = await pool.query(
+    `UPDATE documents SET export_allowed = $3 WHERE id = $1 AND workspace_id = $2 RETURNING *`,
+    [documentId, workspaceId, exportAllowed],
+  );
+  return result.rows[0] ? toDocumentRecord(result.rows[0]) : null;
+}
+
+export type ExportDocumentRecord = DocumentRecord & {
+  /** Newline-preserving full text: chunks re-joined in chunk_index order. Only loaded on request. */
+  content?: string;
+};
+
+/**
+ * Loads documents for Skill Export, ALWAYS scoped to `workspaceId` (an id from
+ * another Workspace is simply absent from the result — never distinguishable
+ * from a missing id). `withContent` joins the stored chunks back into the
+ * original text (fixed-size windows without overlap, so concatenation is exact).
+ */
+export async function getDocumentsForExport(
+  pool: Pool,
+  workspaceId: string,
+  documentIds: string[],
+  withContent: boolean,
+): Promise<ExportDocumentRecord[]> {
+  if (documentIds.length === 0) return [];
+  const result = await pool.query(
+    withContent
+      ? `SELECT d.*, COALESCE((SELECT string_agg(dc.content, '' ORDER BY dc.chunk_index)
+                                 FROM document_chunks dc WHERE dc.document_id = d.id), '') AS content
+           FROM documents d
+          WHERE d.workspace_id = $1 AND d.id = ANY($2::uuid[])
+          ORDER BY d.id`
+      : `SELECT d.* FROM documents d WHERE d.workspace_id = $1 AND d.id = ANY($2::uuid[]) ORDER BY d.id`,
+    [workspaceId, documentIds],
+  );
+  return result.rows.map((row) => ({
+    ...toDocumentRecord(row),
+    ...(withContent ? { content: row.content as string } : {}),
+  }));
 }
 
 export async function deleteDocument(pool: Pool, workspaceId: string, documentId: string): Promise<boolean> {

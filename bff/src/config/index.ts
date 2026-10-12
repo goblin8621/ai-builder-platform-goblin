@@ -21,6 +21,8 @@ export type AppConfig = {
     devSeedWorkspaceId: string;
     /** Allow per-request override of identity via headers. Dev/test only. */
     devAllowContextOverrideHeaders: boolean;
+    /** Role DevAuthContextProvider reports for the seed identity. Dev/test only. */
+    devWorkspaceRole: 'admin' | 'member';
   };
   /** Origins allowed to call the BFF from a browser (Phase 7: web/). */
   webOrigins: string[];
@@ -62,6 +64,7 @@ export function loadConfig(): AppConfig {
       devSeedWorkspaceId:
         process.env.DEV_SEED_WORKSPACE_ID ?? '00000000-0000-0000-0000-0000000000a1',
       devAllowContextOverrideHeaders: mode !== 'production',
+      devWorkspaceRole: process.env.DEV_WORKSPACE_ROLE === 'member' ? 'member' : 'admin',
     },
     webOrigins: (process.env.WEB_ORIGINS ?? 'http://localhost:3000').split(',').map((s) => s.trim()),
   };

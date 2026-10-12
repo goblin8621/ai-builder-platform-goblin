@@ -118,6 +118,102 @@ export type ToolDescriptor = {
   outputSchema: Record<string, unknown>;
 };
 
+// ---------- Documents ----------
+
+export type DocumentRecord = {
+  id: string;
+  workspaceId: string;
+  fileName: string;
+  mimeType: string;
+  storageKey: string;
+  status: 'uploaded' | 'processing' | 'ready' | 'failed';
+  /** Admin-controlled, fail-closed (default false). The BFF re-verifies it on every Export. */
+  exportAllowed: boolean;
+  createdBy: string;
+  createdAt: string;
+};
+
+// ---------- Skill Export (mirror of contracts/export.ts, kept dependency-free like the rest of this file) ----------
+
+export type CompatibilityLevel = 'full' | 'partial' | 'unsupported' | 'blocked';
+export type CompatibilityStatus = 'supported' | 'partial' | 'unsupported';
+
+export type CompatibilityCheck = {
+  id: string;
+  label: string;
+  status: CompatibilityStatus;
+  affectsLevel: boolean;
+  reasons: string[];
+};
+
+export type CompatibilityWarning = { code: string; message: string; checkId: string };
+
+export type UnsupportedCapability = { id: string; label: string; status: CompatibilityStatus };
+
+export type CompatibilitySummary = {
+  requiredMcp: string[];
+  knowledge: { documents: number; included: number; workspaceScope: boolean };
+  unsupportedCapabilities: UnsupportedCapability[];
+};
+
+export type CompatibilityResult = {
+  target: string;
+  format: string;
+  level: CompatibilityLevel;
+  checks: CompatibilityCheck[];
+  warnings: CompatibilityWarning[];
+  manualSteps: string[];
+  summary: CompatibilitySummary;
+};
+
+export type ExportBlocker = {
+  code: 'EXPORT_SECRET_DETECTED' | 'KNOWLEDGE_EXPORT_FORBIDDEN';
+  message: string;
+  findings: { path: string; category: string }[];
+};
+
+export type EffectiveExportOptions = {
+  includeKnowledge: boolean;
+  includeChildSkills: boolean;
+  includeSourceSpec: boolean;
+};
+
+export type ExportCompatibilityResponse = {
+  compatibility: CompatibilityResult;
+  effectiveOptions: EffectiveExportOptions;
+  blockers: ExportBlocker[];
+  lock: {
+    skill: { displayName: string; archivePath?: string; version: number; skillType: string; contentHash: string };
+    dependencies: Record<string, { displayName: string; version: number; contentHash: string; included: boolean; path?: string }>;
+    knowledge: Record<string, { fileName: string; mimeType: string; included: boolean; path?: string; contentHash?: string }>;
+  } | null;
+};
+
+export type ExportFormatDescriptor = {
+  id: string;
+  displayName: string;
+  contentType: string;
+  targetOptimized: boolean;
+  embedsKnowledge: boolean;
+  embedsChildSkills: boolean;
+  embedsSourceSpec: boolean;
+  adapterAvailable: boolean;
+};
+
+export type ExportTargetDescriptor = { id: string; displayName: string; formats: ExportFormatDescriptor[] };
+
+export type ExportTargetsResponse = { targets: ExportTargetDescriptor[] };
+
+export type ExportRequestBody = {
+  version: number;
+  target: string;
+  format: string;
+  includeKnowledge?: boolean;
+  includeChildSkills?: boolean;
+  includeSourceSpec?: boolean;
+  acknowledgeWarnings?: boolean;
+};
+
 export function emptySpec(overrides: Partial<SkillSpecV1> = {}): SkillSpecV1 {
   return {
     schemaVersion: '1.0',

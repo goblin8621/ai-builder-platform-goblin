@@ -93,6 +93,7 @@ ensure_test_db
 for db in ai_builder_platform ai_builder_platform_test; do
   apply_sql "$db" "$ROOT_DIR/db/migrations/001_init.sql"
   apply_sql "$db" "$ROOT_DIR/db/migrations/002_skill_registry.sql"
+  apply_sql "$db" "$ROOT_DIR/db/migrations/003_document_export_permission.sql"
   apply_sql "$db" "$ROOT_DIR/db/seeds/001_seed_workspace.sql"
 done
 

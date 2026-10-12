@@ -34,6 +34,8 @@ class ToolDescriptorOut(BaseModel):
     displayName: str
     inputSchema: dict[str, Any]
     outputSchema: dict[str, Any]
+    description: str = ""
+    protocol: str = "builtin"
 
 
 class CapabilityFlagsOut(BaseModel):
@@ -77,6 +79,8 @@ async def list_tools() -> ToolsResponse:
                 displayName=t.display_name,
                 inputSchema=t.input_schema,
                 outputSchema=t.output_schema,
+                description=t.description,
+                protocol=t.protocol,
             )
             for t in _tool_registry.list_available()
         ]

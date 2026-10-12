@@ -20,6 +20,9 @@ export type ToolDescriptor = {
   displayName: string;
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
+  /** Phase 9 (Skill Export): Provider-neutral description + reach protocol. */
+  description?: string;
+  protocol?: 'builtin' | 'mcp';
 };
 
 export type ModelsResponse = { models: ModelDescriptor[] };

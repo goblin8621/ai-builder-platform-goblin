@@ -21,7 +21,16 @@ export type RequestContext = {
   requestId: string;
   /** Optional external client correlation id (e.g. One-Chat conversation). Not required by Skill Core. */
   conversationId?: string | null;
+  /**
+   * Phase 9: the caller's role in `workspaceId`, resolved by the
+   * AuthContextProvider (a real provider reads it from its token claims).
+   * Absent means least privilege — treated as 'member', never 'admin'.
+   * Used for admin-only actions such as allowing a Document to be exported.
+   */
+  workspaceRole?: WorkspaceRole;
 };
+
+export type WorkspaceRole = 'admin' | 'member';
 
 /**
  * Standard error shape returned by both BFF and Brain APIs.

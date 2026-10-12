@@ -8,6 +8,7 @@ import type { SkillRecord, SkillSpecV1 } from '../../../lib/types';
 import { SkillSpecForm } from '../../../components/SkillSpecForm';
 import { PreviewDebugPanel } from '../../../components/PreviewDebugPanel';
 import { VersionHistory } from '../../../components/VersionHistory';
+import { ExportDialog, ExportMenu, type ExportChoice } from '../../../components/ExportDialog';
 
 type LeftTab = 'build' | 'configure' | 'history';
 
@@ -27,6 +28,7 @@ export default function SkillWorkspacePage() {
   const [refining, setRefining] = useState(false);
   const [clarifyMessage, setClarifyMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [exportChoice, setExportChoice] = useState<ExportChoice | null>(null);
 
   async function load() {
     try {
@@ -138,7 +140,10 @@ export default function SkillWorkspacePage() {
               v{skill.currentVersion}
             </span>
           </div>
-          {skill.status !== 'active' && <button onClick={handleActivate}>Activate</button>}
+          <div className="row">
+            <ExportMenu onChoose={setExportChoice} />
+            {skill.status !== 'active' && <button onClick={handleActivate}>Activate</button>}
+          </div>
         </div>
       </div>
 
@@ -196,6 +201,10 @@ export default function SkillWorkspacePage() {
 
         <PreviewDebugPanel skillId={skillId} spec={savedSpec} />
       </div>
+
+      {exportChoice && (
+        <ExportDialog skillId={skillId} choice={exportChoice} isDirty={isDirty} onClose={() => setExportChoice(null)} />
+      )}
     </main>
   );
 }

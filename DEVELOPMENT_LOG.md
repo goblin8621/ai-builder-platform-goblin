@@ -1,4 +1,4 @@
-# AI Builder Platform — 개발 현황 (Phase 1~8)
+# AI Builder Platform — 개발 현황 (Phase 1~9)
 
 > 이 문서는 신규 Standalone Skill Platform(`ai-builder-platform`)의 지금까지 개발 이력을
 > 정리한 기록입니다. 공식 설계 기준은 Notion "AI Builder Platform 기능 기획안"(00~09번
@@ -7,9 +7,9 @@
 > 수정하지 않았습니다** — 03/08번 문서에 반영이 필요한 항목은 아래 [문서 반영 필요
 > 항목]에 별도로 정리했습니다.
 
-- 기준 날짜: 2026-10-01
-- 완료 Phase: **Phase 1 ~ Phase 8** (+ 실LLM 실사용 검증 라운드)
-- 다음 Phase: 없음(Skill-first Standalone Platform 완료) — Agent/외부 서비스 연동은 별도 착수 필요
+- 기준 날짜: 2026-10-07
+- 완료 Phase: **Phase 1 ~ Phase 9** (+ 실LLM 실사용 검증 라운드)
+- 다음 Phase: 없음 — Skill-first Standalone Platform + Skill Export/Portability 완료. Agent/외부 서비스 연동은 별도 착수 필요(자동 진행하지 않음)
 
 ---
 
@@ -34,6 +34,9 @@ PostgreSQL (Docker Compose) — workspaces/skills/skill_versions/skill_runs/
   실제 Run과 100% 동일한 Runtime 경로이며 별도의 Fake Runtime은 없다.
 - 인증은 구현하지 않고 `RequestContext`(userId/workspaceId/requestId) +
   `AuthContextProvider`/`DevAuthContextProvider`로 경계만 분리해두었다(Phase 1 결정).
+- **Skill Export(Phase 9)**도 같은 역할 분리를 따른다 — BFF가 Version·Child·문서 권한을 해석해 Brain에
+  넘기면 Brain(`brain/app/exports/`)이 PortableSkill 컴파일·Sanitizer·Compatibility·Adapter 변환만 하고,
+  ZIP 패키징/다운로드는 BFF가 맡는다.
 - Web은 Frontend에 Runtime 로직을 두지 않는다(00번 원칙) — Skill Spec 검증/실행/
   Approval 판단은 전부 BFF/Brain 응답을 그대로 표시할 뿐, Web 자체는 아무 판단도
   하지 않는다.
@@ -556,6 +559,215 @@ Tool/Step 출력과 다르거나 `outputMap`이 없어 Output Validation에서 �
 
 ---
 
+## Phase 9 — Skill Export / Portability (2026-10-06 ~ 10-07)
+
+공식 기준: Notion 10번 "Skill Export / Portable Skill 설계" + 09번. 목표는 Skill Builder에서
+만든 Skill을 특정 Provider에 종속시키지 않고 외부 환경(첫 Target: **Claude**)에서 바로
+쓸 수 있게 Export하는 **Skill Portability Layer**다.
+
+### 아키텍처
+
+```
+SkillSpec ──(BFF: Version/Child/Document 해석·잠금·권한)──▶ Brain
+   Portable Skill Compiler → PortableSkill → Export Sanitizer → Compatibility Analyzer
+        → Export Adapter(target, format) → Manifest → 파일 목록 ──▶ BFF: ZIP/다운로드
+```
+
+- **역할 분리**(06번 유지): Brain은 DB 없는 순수 변환(`brain/app/exports/`), BFF는 Version·Child
+  Skill·문서 권한 해석, ZIP 패키징, 다운로드 응답(`bff/src/skill-exports/`).
+- `SkillSpec`은 내부 Source of Truth로 유지. **Provider 전용 필드를 SkillSpec/PortableSkill에 넣지 않는다.**
+  Provider 차이는 **Target Profile + Adapter**가 담당한다.
+
+### PortableSkill (`contracts/portable-skill.{schema.json,ts}`, `brain/app/exports/models.py`)
+
+Provider 비종속 Export 전용 중간 표현. 10번 §3 + 확정 결정: `guardrails`, `runtimeLimits`(선언값일 뿐
+모든 Target에서 강제된다고 가정하지 않음), `dependencies[{ref}]`, 선택적 `source`/`sourceSpec`.
+
+- Registry Model id(`spec.model`)는 내보내지 않는다. 내부 `skillId`/`documentId`도 쓰지 않고
+  Package-local alias(`child:<slug>`, `doc:<slug>`)만 쓴다. 내부 ID는 `includeSourceSpec`을 켠 경우의
+  `source`에만 나타난다.
+- JSON Schema 하나를 Brain(Pydantic)과 BFF(ajv)가 같은 fixture로 검증하고, BFF는 Brain이 만든
+  모든 `skill.json`을 패키징 전에 스키마로 재검증한다(계약 가드).
+
+### Adapter / Target 구조
+
+`brain/app/exports/profiles/` (무엇을 지원하는가) + `adapters/` (어떻게 변환하는가).
+새 Target은 **Profile 등록 + Adapter 등록**만으로 추가된다(SkillSpec/Runtime 수정 없음 — 테스트로 실증:
+`test_adding_a_target_needs_only_a_profile_and_an_adapter`).
+
+| Target | Format | Adapter | 비고 |
+|---|---|---|---|
+| `generic` | `portable-package` | PortablePackageAdapter | ZIP: SKILL.md(frontmatter 없음)/skill.json/manifest.json/references/children |
+| `generic` | `markdown` | GenericMarkdownAdapter | 단일 `.md`, Provider frontmatter 없음 |
+| `generic` | `raw-spec` | RawSpecAdapter | 저장된 SkillSpec 그대로(Sanitizer 예외 없음) |
+| `claude` | `skill-package` | ClaudeSkillAdapter | Claude/Agent Skill 형식(아래) |
+
+공개 API는 `format: "target"` 같은 추상값 없이 `{ target, format }`을 명시한다.
+에러 구분: 미지원 Target `EXPORT_TARGET_UNSUPPORTED`, Target이 제공하지 않는 Format
+`EXPORT_FORMAT_UNSUPPORTED`, 지원 Target인데 Adapter 미등록 `EXPORT_TARGET_ADAPTER_UNAVAILABLE`
+(`GET /export/targets`가 `adapterAvailable`로 알려 UI가 쓸 수 없는 항목을 노출하지 않음).
+BFF는 Skill을 조회하기 **전에** 이 검사를 수행해 Skill 존재 여부가 새지 않는다.
+
+### Claude Adapter
+
+Claude 공식 문서(Agent Skills / authoring best practices)의 규칙을 Adapter가 전담한다.
+
+- `SKILL.md` + YAML frontmatter(`name`, `description`). **name**: ≤64자, 소문자·숫자·하이픈, XML 태그 금지,
+  예약어(`anthropic`, `claude`) 금지. **description**: 비어있지 않음, ≤1024자, XML 태그 금지, "무엇을 + 언제 쓰는지".
+- 본문 500줄 미만(JSON Schema가 크면 `references/schemas.md`로 이동, 그래도 넘으면 export 거부),
+  `SKILL.md`에서 한 단계 깊이로 링크, 슬래시 경로, MCP 도구는 `ServerName:tool_name` 표기.
+- 본문은 **Claude를 독자로 쓴 전용 렌더러**(명령형 지시: 단계 순서, 승인 시 "사용자에게 먼저 확인",
+  onError 지시 등). Generic Markdown 렌더러를 이름만 바꿔 쓰지 않는다.
+- 이름 규칙: root name = ASCII slug(없으면 `skill-<id8>`), 예약어가 들어가면 안전한 이름으로 대체하고 경고.
+  description이 1024자를 넘으면 frontmatter만 줄이고(전체는 `skill.json`) `CLAUDE_DESCRIPTION_TRUNCATED` 경고.
+  description에는 "Use when: <objective>"를 (이미 포함되지 않은 경우) 덧붙인다.
+- **검증기**(`validate_claude_package`): SKILL.md 존재, frontmatter 존재·YAML 유효, name/description 규칙과 길이,
+  500줄, 모든 상대 링크가 패키지 안의 실제 파일을 가리키고 밖으로 나가지 않음, 모든 경로 ASCII-safe, 중복 없음,
+  `skill.json`/`manifest.json` 존재. 자식 Skill의 SKILL.md도 동일 검증. 위반 시 `EXPORT_PACKAGE_INVALID`.
+- **Claude Profile**(정직한 보정): 순서/조건/입출력 매핑은 지시로 따를 수 있어 지원, 오류 **정책**(retry/fallback/skip/fail)과
+  runtime limit은 패키지가 보장할 수 없어 미지원, 이 플랫폼의 builtin Tool은 Claude에 없어 미지원(MCP 서버로 대체 필요),
+  MCP는 사용 가능하지만 패키지가 서버를 설정할 수는 없어 항상 `partial`, Code Execution은 환경 의존이라 약속하지 않음.
+  Target별 설명은 Profile `notes`로 사유에 덧붙인다.
+
+### Generic Markdown Adapter
+
+단일 `.md`(Description/Objective/Instructions/Guardrails/Input·Output Contract/Workflow/Required Tools/
+Knowledge/Dependencies/Runtime Limits/Examples). Provider frontmatter 없음. Tool/MCP/RAG를 구성할 수는 없고
+문서를 담을 수 없어(`References Only` 강제) Compatibility가 그대로 알린다. Child Skill은 같은 파일 뒤에 섹션으로 포함 가능.
+
+### ZIP Archive Path 정책 (ASCII-safe, 확정 결정)
+
+외부 환경 간 이식성이 목표이므로 **모든 ZIP entry path는 ASCII**다(`brain/app/exports/archive.py`).
+
+```
+skill-a31fc912/                       # 한글 이름 → skill-<id8>, 영문 이름 → sales-analyzer-<id8>
+├─ SKILL.md  skill.json  manifest.json
+├─ references/document-928ac031.md    # 원본 이름이 아니라 stable id 기반
+└─ children/parser-1a2b3c4d/{SKILL.md,skill.json}
+```
+
+- 규칙: ASCII 영숫자와 `._-`만, 각 segment는 영숫자로 시작(`.`/`..`/숨김 파일 불가), 구분자는 `/`뿐, 절대경로·`../`·
+  백슬래시·제어문자·빈 segment 금지, 결정론적, 충돌 방지(stable id + 유일성 보정).
+- 표시 이름은 `manifest.json`(`skill.displayName`/`archivePath`, `knowledge[].fileName`/`path`,
+  `dependencies[].displayName`/`path`)과 SKILL.md 본문 텍스트에 **보존**. Skill 이름은 UI에서 바뀌지 않음.
+- Brain이 경로를 만들고, BFF `package.service.ts`가 같은 규칙으로 **다시 검증**(비-ASCII/traversal/중복 거부).
+- 동기: 구형 Info-ZIP `unzip`(macOS 기본)이 한글 엔트리명을 추출하지 못했다. 변경 후 같은 한글 Skill/문서 패키지를
+  기본 `unzip`으로 `-t` 및 추출 성공을 실제 서버에서 확인.
+
+### Knowledge Export 정책
+
+- `knowledge.mode='selected'`만 Include Documents 가능. `workspace` 모드는 **항상 References Only**(경고 `EXPORT_KNOWLEDGE_WORKSPACE_REFERENCES_ONLY`).
+- 포함 조건: `workspace 권한 ∧ document 접근 권한 ∧ documents.export_allowed = true`
+  (`bff/src/skill-exports/export-permissions.ts`에 조건별 함수로 분리). `export_allowed` 기본값 `false`(fail-closed),
+  마이그레이션 `003_document_export_permission.sql`. **Workspace 소속 + ready만으로는 허용하지 않는다.**
+  문서별 ACL이 데이터 모델에 없어 현재 "접근 권한" = 같은 Workspace + `ready` 상태이며, 함수 하나만 바꾸면 교체된다.
+- `PATCH /documents/:id { exportAllowed }` — **admin 전용**(`RequestContext.workspaceRole`).
+- **Compatibility = 설명, Export = 강제**: Compatibility는 HTTP 200 + `level: "blocked"` + `blockers[KNOWLEDGE_EXPORT_FORBIDDEN]`로
+  이유를 알려주고, 실제 `POST /export`는 403. 두 경우 모두 접근 불가 문서의 이름·ID·내용·개수를 노출하지 않는다
+  (`lock`도 null, 사유는 reason별 집계만). Brain의 Compatibility 사유에서도 문서 **이름 대신 개수**만 쓴다
+  (테스트가 잡은 실제 노출 결함 — 아래).
+- 내용: 줄바꿈 LF 정규화 후 sha256을 Manifest에 기록. 텍스트 문서만 지원(Phase 6 범위).
+
+### Child Skill / 재현성
+
+- Export 시작 시 Dependency Resolution으로 Child Version을 **잠그고**(현재 Version) Manifest에 `child:<alias>`별
+  `version`/`contentHash`를 기록. content hash는 Child의 자기 Child까지 포함하는 Merkle 구조.
+- Cycle/깊이(16) 방지, Child가 soft-delete/타 Workspace/없음이면 `EXPORT_CHILD_UNAVAILABLE`로 실패(조용히 제외하지 않음).
+- **정확한 재현성 기준**: 같은 Parent Version + 같은 resolved Child Versions + 같은 Knowledge Content + 같은 Export Options +
+  같은 Target/Format ⇒ 바이트 동일. "같은 Parent Version이면 항상 같은 파일"은 보장하지 않는다.
+- 결정론: ZIP entry 순서 고정, 고정 mtime(1980-01-01 00:00:00, 로컬 컴포넌트로 생성해 타임존 무관), UTF-8, JSON key 정렬,
+  LF 정규화, `fflate`를 `0.8.3`으로 고정. `exportedAt`은 Package 내부에 없고 응답 헤더 `X-Exported-At`/로그에만 있다.
+
+### Export Sanitizer 정책
+
+모든 Target/Format(Raw SkillSpec, Generic Markdown 포함)에 **필수 적용**. 탐지 시 redact하지 않고 **차단**
+(`EXPORT_SECRET_DETECTED`), 응답에는 `path`와 `category`만(값 절대 미포함).
+
+- **Hard Block**: 벤더 API Key, Bearer Token 값, Authorization/API-Key 헤더 값, JWT, Private Key, URL userinfo credential,
+  `?access_token=…`/`api_key=…`/`client_secret=…` 같은 credential query, password/secret/client_secret/access_token/api_key 할당(실값처럼 보이는 값),
+  구조화 데이터의 secret 필드.
+- **Allow**: 인증 Endpoint를 설명하는 일반 URL(`/oauth/token`, `/authorize`, `/saml`, `/sso` …), placeholder(`<token>`, `{token}`, `${KEY}`,
+  `YOUR_KEY`, `****`), credential에 대한 서술. **기준은 경로 이름이 아니라 Credential 값의 존재 여부.**
+- 입력(Spec/Child/문서)을 먼저, 생성 파일을 안전망으로 한 번 더 검사. Compatibility에서는 차단 대신 `blocked`로 미리 알림.
+
+### Compatibility 정책
+
+- `full | partial | unsupported | blocked`(API/DB/Contract는 소문자, UI만 대문자). `blocked`는 Analyzer가 만들지 않고
+  "지금은 Export 불가(Secret/Knowledge 권한)"일 때만.
+- Target Profile: `llm`, `workflowSemantics`(sequentialSteps/condition/retry/fallback/skip/fail/inputMapping/outputMapping),
+  `runtimeLimits`, `declarative`(carrier 여부), `notes`. 응답에 `summary`(`requiredMcp`, `knowledge`, `unsupportedCapabilities`)와 `manualSteps`.
+- **Advisory**(예: timeout 미강제)는 경고로 보고하되 level을 낮추지 않음. `condition`은 원본 Runtime도 평가하지 않으므로
+  항상 `partial`. Nested Skill 자식의 Approval(`NESTED_SKILL_APPROVAL_NOT_SUPPORTED`)은 `unsupported`.
+- `acknowledgeWarnings` 없이는 `partial`/`unsupported` export 불가. Target Optimized Format(`claude`)은 `unsupported`면 acknowledge해도
+  `EXPORT_COMPATIBILITY_UNSUPPORTED`로 차단(generic은 경고 후 허용).
+
+### API
+
+`GET /export/targets`, `GET /skills/:id/export/compatibility?version=&target=&format=&include…`, `POST /skills/:id/export`
+(`version` 필수 — "latest" 암묵 적용 없음), `PATCH /documents/:id`. 새 HTTP 에러 코드는 만들지 않고 `details.code`에 기계 판별 코드.
+다운로드 메타데이터는 응답 헤더(`X-Export-Compatibility`, `X-Export-Content-Hash`, `X-Export-Skill-Version`, `X-Exported-At`), CORS `exposedHeaders` 설정.
+
+### Web UI
+
+Skill 헤더 `Export ▾`: Claude Skill / Generic Markdown / Raw SkillSpec / Portable Skill Package(Adapter가 있는 항목만).
+다이얼로그: Version 선택 → Compatibility(FULL/PARTIAL/UNSUPPORTED/BLOCKED), Required MCP, Knowledge, Unsupported Capabilities,
+Warnings, 수동 설정 → 옵션(Include Knowledge / Child Skills / source SkillSpec) → 경고 확인 → 다운로드.
+`exportAllowed=false` 문서는 Include Knowledge 비활성화 + Blocker 표시(+ admin용 "Allow export"). Web 값은 신뢰하지 않으며 BFF가
+Export마다 권한을 다시 검증. `web/lib/types.ts`에 `DocumentRecord.exportAllowed` 및 Export 타입 반영, drift는
+`tests/contract/web-export-types-drift.test.ts`가 `types.ts`를 직접 파싱해 실제 응답과 비교.
+
+### 보안: workspaceRole
+
+Role 테이블 없이 `AuthContextProvider`가 `workspaceRole`을 `RequestContext`로 해석(없으면 `member` = fail-closed).
+Domain은 Header/Body를 직접 읽지 않고 `canManageDocumentExport(context)`만 소비(소스 스캔 테스트로 고정).
+Production에서는 Dev Provider가 기동 자체를 거부(`selectAuthProvider`)하고 override header도 꺼져 있어, 클라이언트가 보낸 값으로는
+admin이 될 수 없다. 실제 JWT/RBAC는 Provider 구현 하나만 교체.
+
+### 테스트 결과
+
+| 대상 | Phase 8 종료 | Phase 9 종료 | 증가 |
+|---|---|---|---|
+| Brain (pytest) | 109 (+1 skip) | **361 (+1 skip)** | +252 |
+| BFF (vitest, contract/e2e 포함) | 94 | **228** | +134 |
+| BFF/Web 타입체크 | 0 오류 | 0 오류 | — |
+
+- Phase 9 E2E(`tests/e2e/phase9-export.test.ts`): Prompt / Knowledge / Tool / 권한 없는 Knowledge 시나리오를 Skill Builder부터
+  ZIP 해제·검증까지 실제 경로로 수행, ZIP은 외부 `unzip -t`로도 검증, YAML은 `js-yaml`로 Brain 검증기와 독립적으로 검증.
+- 방어선을 일부러 깨뜨려 테스트가 실제로 실패하는지 확인(export_allowed 검사 제거, raw-spec Sanitizer 우회, frontmatter name 제거,
+  Claude 검증기 무력화, Web 타입에서 `exportAllowed` 제거 → 모두 해당 테스트가 실패, 원복 확인).
+- 실제 기동 서버 + 실제 브라우저(Web UI)로 Knowledge Allow → Include → FULL → 다운로드, Tool Skill의 Required MCP, Secret의 BLOCKED 렌더링 확인.
+
+### 테스트가 잡아낸 결함 (모두 수정)
+
+| 결함 | 수정 |
+|---|---|
+| `formatVersion`이 기본값이라 `exclude_unset` 직렬화에서 누락(golden도 그 상태로 생성되어 있었음) | 컴파일러에서 명시 설정 |
+| `timeoutSec` 30이 Pydantic `float`로 `30.0`이 됨 | `int | float` |
+| ZIP mtime을 모듈 로드 시 1회 생성 → 이후 TZ가 다르면 DOS 범위를 벗어남 / UTC로 만들면 TZ별로 바이트가 달라지거나 예외 | 호출마다 로컬 컴포넌트로 생성, TZ 5종 동일 바이트 테스트 |
+| **Compatibility `blocked` 응답의 `reasons`/`warnings`에 접근 불가 문서의 파일명이 들어감**(lock만 null로 막았던 구멍) | 문서 이름 대신 개수만 보고 |
+| 한글 엔트리명을 구형 `unzip`이 추출하지 못함(실제 서버에서 발견) | ASCII Archive Path 정책 |
+| Claude 프로파일을 처음엔 순서/매핑까지 미지원으로 둬 단순 2-step Skill도 `partial` | Skill의 본래 용도에 맞게 보정(오류 정책/limit만 미지원) |
+| Sanitizer가 `/oauth/token` 같은 URL 경로와 `{token}`, `user:<password>@host` placeholder까지 차단 | Credential 값 기준으로 재정의, 오탐 회귀 테스트 |
+
+### Known Limitations
+
+- **Claude 호환은 공식 문서의 규칙을 구현·검증한 것이지, 실제 Claude 환경에 업로드해 확인한 것이 아니다**(업로드 수단 없음).
+  frontmatter/구조/링크 규칙은 독립 검증기 2종(Brain, E2E의 js-yaml)으로 확인.
+- Claude는 이 플랫폼의 builtin Tool(file-parser 등)을 가지지 않는다 → Tool Skill은 항상 `partial`이며 MCP 서버를 사용자가 구성해야 한다.
+  MCP 서버 이름을 알 수 없어 `ServerName:tool_name`으로 표기. 패키지는 MCP 서버를 설정하지 못한다.
+- Code Execution은 Claude 환경(Claude Code/코드 실행 도구)에 의존해 약속하지 않는다.
+- Child Skill은 `children/<slug>-<id8>/SKILL.md`로 포함되어 부모가 링크로 안내한다. Claude 환경이 중첩 폴더를 별도 Skill로 자동 인식하는지는 보장하지 않는다.
+- Nested Skill 자식의 Approval(Phase 8 Known Limitation)과 `condition`(Runtime 미평가)은 어떤 Target에서도 재현을 보장하지 않으며 Compatibility에 명시.
+- `SKILL.md`가 500줄을 넘으면(Schema는 reference로 이동 후에도) export를 거부한다. 비정상적으로 큰 Workflow(수백 Step)에서만 발생.
+- `scripts/`, `assets/`는 Skill이 소유한 스크립트/자산이 없어 생성하지 않는다.
+- 문서 ACL이 없어 "문서 접근 권한" = 같은 Workspace + `ready`. admin 권한은 `workspaceRole`로만 판단(Role 테이블 없음).
+- Export 감사는 서버 로그뿐이며 별도 감사 테이블은 없다.
+- Sanitizer는 정규식 기반 휴리스틱(DLP 아님). 8자 미만 또는 숫자/기호가 없는 짧은 값(`password=abcdefgh`)은 탐지하지 못한다.
+- 웹 UI에서 member 역할을 시험할 방법은 없다(Dev Provider가 admin 고정). 서버 측은 테스트로 검증.
+- 이전부터의 제약: `tsc` 빌드 산출물(`dist/`)에 JSON 계약 파일이 복사되지 않아 `NODE_ENV=production node dist/...` 실행은 불가(개발은 `tsx`).
+
+---
+
 ## 1. 현재 지원 범위 요약
 
 | 영역 | 상태 |
@@ -576,6 +788,8 @@ Tool/Step 출력과 다르거나 `outputMap`이 없어 Output Validation에서 �
 | MCP | ❌ 보류 |
 | Agent/외부 서비스 연동 | ❌ 범위 밖(계획대로) |
 | Skill Playground(Web UI) | ✅ (Phase 7 — My Skills/만들기/구성/Version History/Preview·Debug) |
+| Skill Export (Claude Skill / Generic Markdown / Raw SkillSpec / Portable Package) | ✅ (Phase 9 — Compatibility 분석, ASCII Archive Path, Knowledge 권한, Sanitizer) |
+| Export Target 확장 | ✅ Profile + Adapter 등록으로 추가(SkillSpec/Runtime 무수정) |
 
 ---
 
@@ -602,7 +816,8 @@ Phase 1~8 전체에서 나온 설계 이슈를 한곳에 모은 것. 각 항목�
 | MCP | 미구현, 명시적 보류 | 연동 테스트할 실제 MCP 서버가 없었음 |
 | `web/lib/types.ts` | `contracts/*.ts`를 런타임 의존성으로 import하지 않고 독립적으로 타입을 미러링(Web 독립 배포 특성 유지, 사용자 확정) | **Drift 검출 테스트는 이번에 추가함**(`tests/contract/web-types-drift.test.ts`) — 대규모 OpenAPI 코드젠은 검토했으나 이번 라운드에서는 보류 |
 | One-Chat 실제 연동 | Phase 8 범위에서 제외 | 외부 서비스 연동이라 Agent/외부 연동을 다루는 이후 Phase 소관(09번 원칙) |
-| 03/08번 Notion 문서 미반영 | 아래 3절 "문서 반영 필요 항목" 참고 | 코드에는 이미 반영됨, Notion 문서 자체는 수정하지 않기로 함 |
+| Skill Export 한계 | 위 Phase 9 "Known Limitations" 참고 (Claude 실환경 업로드 미검증, Tool은 MCP 구성 필요 등) | 의도적 범위 결정 |
+| 03/08/10번 Notion 문서 미반영 | 아래 3절 "문서 반영 필요 항목" 참고 | 코드에는 이미 반영됨, Notion 문서 자체는 수정하지 않기로 함 |
 
 ### 2-3. 발견 즉시 수정한 버그 (참고 기록 — 더 이상 열려있지 않음)
 
@@ -627,6 +842,7 @@ Phase 1~8 전체에서 나온 설계 이슈를 한곳에 모은 것. 각 항목�
 | 8+(실LLM) | 복잡한 요청(Composite)에서 모델이 `{action, spec}` envelope을 통째로 빼먹고 SkillSpec을 최상위에 바로 반환 — 기존 Repair 힌트("unknown action: None")로는 반복 수정 실패 | Repair 힌트를 "action이 없고 bare spec처럼 보이면 envelope으로 감싸라"고 구체화 |
 | 8+(운영) | 자동화 테스트(`npm test`)가 Web UI와 동일한 dev DB에 연결되어 반복 실행마다 Skill fixture가 "My Skills"에 쌓임(한 세션 동안 538개까지 누적) | 별도 `ai_builder_platform_test` DB 신설, `bff/vitest.config.ts` 기본값으로 분리 |
 | 8+(운영) | `BRAIN_TIMEOUT_MS` 기본값(10초)이 실제 LLM 응답 지연(Repair 포함 시 2회 호출)엔 부족해 504 발생 | 로컬 개발 시 `BRAIN_TIMEOUT_MS=60000` 권장(환경변수로 이미 조정 가능, 기본값 자체는 변경 안 함) |
+| 9 | 위 Phase 9 "테스트가 잡아낸 결함" 표 참고(`formatVersion` 누락, `30.0`, ZIP mtime/TZ, **Compatibility의 문서 이름 노출**, 비-ASCII ZIP 경로, Claude 프로파일 보정, Sanitizer 오탐) | 모두 수정 + 회귀 테스트 |
 
 ---
 
@@ -641,6 +857,19 @@ Phase 5에서 사용자 결정으로 도입했으나 **Notion 03/08번 문서에
    `{"$ref": "steps.<stepId>.output.<path>"}` 객체만 참조로 인정, 그 외 값(문자열
    포함)은 전부 Static Value
 
+Phase 9에서 사용자 결정으로 **10번 문서와 달라졌으나 Notion에는 반영되지 않은** 항목:
+
+3. **API 형태**: `format: "target"` + `target`/`profile` 대신 `{ target, format }`을 명시
+   (`claude`/`skill-package`, `generic`/`markdown|portable-package|raw-spec`). `GET .../compatibility`에
+   `version`이 필수, `profile`/`runtimeProfile` 개념은 사용하지 않음
+4. **Compatibility level**: `full|partial|unsupported` + `blocked`(Secret/Knowledge 권한으로 지금 Export 불가). 소문자 canonical
+5. **Target Profile 확장**: `llm`, `workflowSemantics` 세부 8개 flag, `runtimeLimits` 지원 flag, `declarative`, `notes`
+6. **PortableSkill 확장**: `guardrails`, `runtimeLimits`, `dependencies`, Package-local alias(`child:`/`doc:`), 선택적 `source`/`sourceSpec`
+7. **ZIP 경로**: 모든 entry path ASCII-safe(`skill-<id8>`, `references/document-<id8>.<ext>`), 표시 이름은 manifest에 보존
+8. **Manifest**: `exportedAt` 없음(Stable metadata만), `skill.displayName`/`archivePath`, Child는 `version`+`contentHash`로 잠금
+9. **Document**: `documents.export_allowed`(기본 false) + admin 전용 `PATCH /documents/:id`, `workspace` knowledge는 References Only 강제
+10. **Sanitizer**: 값 기반 Hard Block, 인증 Endpoint 경로명/placeholder는 허용, redact 없이 차단
+
 ---
 
 ## 4. 다음 계획
@@ -651,5 +880,7 @@ Phase 1~8(Standalone Skill Platform)이 완료되었다 — 09번이 요구하�
 - **Nested Skill + Human Approval 전파**: Phase 8에서 발견했고 사용자 결정으로 이번
   범위에서는 "명확한 에러"로만 수정. 실제로 전파를 구현하기로 하면 Brain 재귀 실행
   엔진 + BFF approve/resume 로직을 함께 바꾸는 별도 작업 필요
-- 보류 항목(Streaming, MCP, 컨테이너 기반 Sandbox 강화, 실제 임베딩 Provider 연동,
+- 보류 항목(Streaming, MCP 실행, 컨테이너 기반 Sandbox 강화, 실제 임베딩 Provider 연동,
   One-Chat 실제 연동)은 Agent/외부 서비스 연동을 다루는 이후 Phase에서 진행
+- **Export 이후 후보**(자동 진행하지 않음): Import(Raw SkillSpec/Portable Package 재가져오기), 추가 Target Adapter(예: OpenAI-compatible,
+  Gemini — Profile + Adapter 추가만으로 가능), 실제 Claude 환경에서의 패키지 인식 검증, Export 감사 테이블, 문서 ACL

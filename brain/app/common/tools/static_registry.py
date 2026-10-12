@@ -17,18 +17,21 @@ _CATALOG: list[ToolDescriptor] = [
     ToolDescriptor(
         tool_id="file-parser",
         display_name="File Parser",
+        description="Parses CSV text into columns and rows.",
         input_schema=_GENERIC_OBJECT_SCHEMA,
         output_schema=_GENERIC_OBJECT_SCHEMA,
     ),
     ToolDescriptor(
         tool_id="python-data-analysis",
         display_name="Python Data Analysis",
+        description="Runs fixed, reviewed analysis operations on tabular data inside an isolated sandbox.",
         input_schema=_GENERIC_OBJECT_SCHEMA,
         output_schema=_GENERIC_OBJECT_SCHEMA,
     ),
     ToolDescriptor(
         tool_id="service-status",
         display_name="Service Status Checker",
+        description="Returns the status of a named service (simulated response on this platform).",
         input_schema=_GENERIC_OBJECT_SCHEMA,
         output_schema=_GENERIC_OBJECT_SCHEMA,
     ),

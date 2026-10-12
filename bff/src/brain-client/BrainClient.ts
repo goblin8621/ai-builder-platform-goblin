@@ -9,6 +9,11 @@ import type {
 import type { ApiErrorResponse, ApiErrorCode } from '../../../contracts/common-types.js';
 import type { BuilderOutput, BuilderRequestBody } from '../../../contracts/builder.js';
 import type { ExecuteRequestBody, RunResult } from '../../../contracts/runtime.js';
+import type {
+  ExportCompileRequestBody,
+  ExportCompileResponse,
+  ExportTargetsResponse,
+} from '../../../contracts/export.js';
 
 export type BrainHealthResponse = {
   status: 'ok';
@@ -88,6 +93,19 @@ export class BrainClient {
     timeoutMsOverride?: number,
   ): Promise<RunResult> {
     return this.request<RunResult>('POST', '/runtime/execute', context, body, timeoutMsOverride);
+  }
+
+  /**
+   * Skill Export (Phase 9). Brain is a pure transformer: BFF has already
+   * pinned the Version, locked Child Skills and verified Document permissions
+   * before calling this (same pattern as `executeSkillRun`).
+   */
+  async exportCompile(context: RequestContext, body: ExportCompileRequestBody): Promise<ExportCompileResponse> {
+    return this.request<ExportCompileResponse>('POST', '/exports/compile', context, body);
+  }
+
+  async exportTargets(context: RequestContext): Promise<ExportTargetsResponse> {
+    return this.request<ExportTargetsResponse>('GET', '/exports/targets', context);
   }
 
   private async request<T>(

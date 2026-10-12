@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from app.common.errors import AppError
 from app.common.logging import error as log_error
+from app.exports.router import router as exports_router
 from app.registries.router import router as registries_router
 from app.skills.router import router as builder_router
 from app.skills.runtime_router import router as runtime_router
@@ -13,6 +14,7 @@ app = FastAPI(title="AI Builder Platform - Brain", version="0.1.0")
 app.include_router(registries_router)
 app.include_router(builder_router)
 app.include_router(runtime_router)
+app.include_router(exports_router)
 
 
 @app.exception_handler(AppError)

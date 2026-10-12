@@ -1,0 +1,68 @@
+{
+  "dependencies": [],
+  "description": "Translates Korean sentences into natural English.",
+  "examples": [
+    {
+      "description": "greeting",
+      "input": {
+        "text": "안녕하세요."
+      }
+    }
+  ],
+  "formatVersion": "2.0",
+  "guardrails": [],
+  "inputContract": {
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "type": "object"
+  },
+  "instructions": [
+    "Do not add explanations.",
+    "Preserve the original meaning only."
+  ],
+  "knowledge": [],
+  "name": "Korean to English Translator",
+  "objective": "Translate the input Korean sentence into natural English without adding explanations.",
+  "outputContract": {
+    "properties": {
+      "translatedText": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "translatedText"
+    ],
+    "type": "object"
+  },
+  "requiredCapabilities": [],
+  "requiredTools": [],
+  "runtimeLimits": {
+    "maxNestedSkillDepth": 0,
+    "maxToolCalls": 0,
+    "retryCount": 1,
+    "timeoutSec": 30
+  },
+  "runtimeRequirements": {
+    "requiresApproval": false,
+    "requiresCodeExecution": false,
+    "requiresKnowledge": false,
+    "requiresLLM": true,
+    "requiresMcp": false,
+    "requiresNestedSkill": false,
+    "requiresTools": false
+  },
+  "skillType": "prompt",
+  "workflow": [
+    {
+      "id": "translate",
+      "kind": "llm",
+      "name": "Translate to English"
+    }
+  ]
+}

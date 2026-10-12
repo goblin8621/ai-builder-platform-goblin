@@ -18,6 +18,11 @@ class ToolDescriptor:
     display_name: str
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
+    # Phase 9 (Skill Export, 10번 §10): Provider-neutral description of what
+    # the tool does and how it is reached, so an Export can record it as a
+    # Portable Requirement. `protocol` is "builtin" (platform-native) or "mcp".
+    description: str = ""
+    protocol: str = "builtin"
 
 
 @dataclass(frozen=True)
